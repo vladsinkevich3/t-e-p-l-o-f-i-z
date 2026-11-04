@@ -16,6 +16,8 @@ import {
   Save,
 } from 'lucide-react';
 import { FullCourseworkCalculation } from '../logic/calculations';
+import { PWAInstallButton } from './PWAInstallButton';
+import { OfflineIndicator } from './OfflineIndicator';
 
 interface HeaderProps {
   calc: FullCourseworkCalculation;
@@ -23,6 +25,7 @@ interface HeaderProps {
   setActiveTab: (tab: string) => void;
   onOpenProjects: () => void;
   onSaveCurrentProject: () => void;
+  onOpenLocalModal: () => void;
   onExportExcel: () => void;
   onExportPdf: () => void;
   onPrint: () => void;
@@ -34,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onOpenProjects,
   onSaveCurrentProject,
+  onOpenLocalModal,
   onExportExcel,
   onExportPdf,
   onPrint,
@@ -66,6 +70,9 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Статус и кнопки действий */}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Офлайн / локальный индикатор */}
+            <OfflineIndicator onOpenLocalModal={onOpenLocalModal} />
+
             {/* Статус соответствия нормативам */}
             <div
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border ${
@@ -86,6 +93,9 @@ export const Header: React.FC<HeaderProps> = ({
                 </>
               )}
             </div>
+
+            {/* Кнопка установки / инфо о работе на ПК */}
+            <PWAInstallButton onOpenLocalModal={onOpenLocalModal} />
 
             {/* Сохранить вариант */}
             <button

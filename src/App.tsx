@@ -15,6 +15,7 @@ import { BasementCalculator } from './components/BasementCalculator';
 import { WindowCalculator } from './components/WindowCalculator';
 import { ReportPreview } from './components/ReportPreview';
 import { ProjectsModal } from './components/ProjectsModal';
+import { LocalModeModal } from './components/LocalModeModal';
 import { DecodedCipher, DEFAULT_CIPHER } from './logic/decodeCipher';
 import { calculateCoursework } from './logic/calculations';
 import { exportCourseworkToExcel } from './export/excelExport';
@@ -25,6 +26,7 @@ export default function App() {
   const [cipher, setCipher] = useState<DecodedCipher>(DEFAULT_CIPHER);
   const [activeTab, setActiveTab] = useState<string>('task');
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState<boolean>(false);
+  const [isLocalModalOpen, setIsLocalModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Мгновенный перерасчет всей курсовой работы
@@ -86,6 +88,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onOpenProjects={() => setIsProjectsModalOpen(true)}
         onSaveCurrentProject={handleQuickSave}
+        onOpenLocalModal={() => setIsLocalModalOpen(true)}
         onExportExcel={handleExportExcel}
         onExportPdf={handleExportPdf}
         onPrint={handlePrint}
@@ -130,9 +133,17 @@ export default function App() {
       {/* Подвал */}
       <footer className="border-t border-slate-900 bg-slate-950/80 text-center py-4 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>
-            «Теплофизика-Калькулятор» — автоматизированное проектирование по СП 2.04.01-2020 и СН 2.04.02-2020
-          </span>
+          <div className="flex items-center gap-3">
+            <span>
+              «Теплофизика-Калькулятор» — автоматизированное проектирование по СП 2.04.01-2020 и СН 2.04.02-2020
+            </span>
+            <button
+              onClick={() => setIsLocalModalOpen(true)}
+              className="text-blue-400 hover:text-blue-300 underline font-medium cursor-pointer"
+            >
+              Автономная работа на ПК (100% Offline)
+            </button>
+          </div>
           <span>Белорусский национальный технический университет (БНТУ)</span>
         </div>
       </footer>
@@ -146,6 +157,12 @@ export default function App() {
           setCipher(loaded);
           showToast(`Загружен вариант: ${loaded.cityCode} (${loaded.wallCode})`);
         }}
+      />
+
+      {/* Модальное окно локального режима на ПК */}
+      <LocalModeModal
+        isOpen={isLocalModalOpen}
+        onClose={() => setIsLocalModalOpen(false)}
       />
     </div>
   );
