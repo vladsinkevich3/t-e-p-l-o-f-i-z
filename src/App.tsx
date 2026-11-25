@@ -120,7 +120,7 @@ export default function App() {
         onOpenMaterialsCatalog={() => setIsMaterialsCatalogOpen(true)}
         onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
         hasOverrides={hasOverrides}
-       onExportExcel={() => showToast('Отчет Excel временно отключен.')}
+        onExportExcel={handleExportExcel}
         onExportWord={handleExportWord}
         onExportPdf={handleExportPdf}
         onPrint={handlePrint}
@@ -148,7 +148,7 @@ export default function App() {
             calc={calculation}
             onChangeCipher={setCipher}
             onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
-          onExportExcel={() => showToast('Отчет Excel временно отключен.')}
+            onExportExcel={handleExportExcel}
             onExportWord={handleExportWord}
           />
         )}
@@ -211,7 +211,7 @@ export default function App() {
             onPrint={handlePrint}
             onExportPdf={handleExportPdf}
             onExportWord={handleExportWord}
-            onExportExcel={() => showToast('Отчет Excel временно отключен.')}
+            onExportExcel={handleExportExcel}
           />
         )}
       </main>
