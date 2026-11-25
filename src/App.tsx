@@ -211,7 +211,7 @@ export default function App() {
             onPrint={handlePrint}
             onExportPdf={handleExportPdf}
             onExportWord={handleExportWord}
-            onExportExcel={handleExportExcel}
+            onExportExcel={() => showToast('Отчет Excel временно отключен.')}
           />
         )}
       </main>
