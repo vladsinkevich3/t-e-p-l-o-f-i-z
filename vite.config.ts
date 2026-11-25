@@ -79,8 +79,11 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          // Disabled in dev mode because vite-plugin-pwa's registerDevSW() calls
+          // import.meta.hot.send() synchronously, which throws SendBeforeConnectError
+          // in Vite 8 when HMR is disabled or before the WebSocket connects.
+          // Production builds (npm run build) still generate the full manifest and SW.
+          enabled: false,
         },
       }),
     ],

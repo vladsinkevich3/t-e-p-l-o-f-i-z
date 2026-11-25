@@ -13,21 +13,32 @@ import { MoistureChart } from './components/MoistureChart';
 import { RoofCalculator } from './components/RoofCalculator';
 import { BasementCalculator } from './components/BasementCalculator';
 import { WindowCalculator } from './components/WindowCalculator';
+import { AutoCadCalculator } from './components/AutoCadCalculator';
 import { ReportPreview } from './components/ReportPreview';
 import { ProjectsModal } from './components/ProjectsModal';
 import { LocalModeModal } from './components/LocalModeModal';
-import { DecodedCipher, DEFAULT_CIPHER } from './logic/decodeCipher';
+import { CalculationOverridesEditor } from './components/CalculationOverridesEditor';
+import { MaterialsCatalogModal } from './components/MaterialsCatalogModal';
+import { NormativeWarningBanner } from './components/NormativeWarningBanner';
+import { DecodedCipher, PDF_REFERENCE_CIPHER } from './logic/decodeCipher';
 import { calculateCoursework } from './logic/calculations';
 import { exportCourseworkToExcel } from './export/excelExport';
 import { exportReportToPdf } from './export/pdfExport';
 import { saveProject } from './db/projectsDb';
 
 export default function App() {
-  const [cipher, setCipher] = useState<DecodedCipher>(DEFAULT_CIPHER);
+  const [cipher, setCipher] = useState<DecodedCipher>(PDF_REFERENCE_CIPHER);
   const [activeTab, setActiveTab] = useState<string>('task');
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState<boolean>(false);
   const [isLocalModalOpen, setIsLocalModalOpen] = useState<boolean>(false);
+  const [isMaterialsCatalogOpen, setIsMaterialsCatalogOpen] = useState<boolean>(false);
+  const [isOverridesEditorOpen, setIsOverridesEditorOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const hasOverrides = Boolean(
+    cipher.overrides &&
+      Object.values(cipher.overrides).some((v) => v !== undefined && v !== null)
+  );
 
   // Мгновенный перерасчет всей курсовой работы
   const calculation = useMemo(() => {
@@ -39,10 +50,15 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Экспорт в Excel
-  const handleExportExcel = () => {
-    exportCourseworkToExcel(calculation);
-    showToast('Книга Excel (.xlsx) успешно создана и скачивается!');
+  // Экспорт в автономную книгу Excel (.xlsx с живыми формулами)
+  const handleExportExcel = async () => {
+    try {
+      await exportCourseworkToExcel(calculation);
+      showToast('Автономная книга Excel (.xlsx, 16 листов, графики Шибеко и AutoCAD) успешно сформирована!');
+    } catch (err) {
+      console.error('Ошибка экспорта в Excel:', err);
+      showToast('Не удалось сформировать файл Excel. Попробуйте снова.');
+    }
   };
 
   // Экспорт в PDF
@@ -89,6 +105,9 @@ export default function App() {
         onOpenProjects={() => setIsProjectsModalOpen(true)}
         onSaveCurrentProject={handleQuickSave}
         onOpenLocalModal={() => setIsLocalModalOpen(true)}
+        onOpenMaterialsCatalog={() => setIsMaterialsCatalogOpen(true)}
+        onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+        hasOverrides={hasOverrides}
         onExportExcel={handleExportExcel}
         onExportPdf={handleExportPdf}
         onPrint={handlePrint}
@@ -103,23 +122,72 @@ export default function App() {
 
       {/* Основной контент */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <NormativeWarningBanner
+          variant="global"
+          warnings={calculation.normativeWarnings}
+          onNavigateTab={setActiveTab}
+          onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+        />
+
         {activeTab === 'task' && (
           <TaskCipherInput
             cipher={cipher}
             calc={calculation}
             onChangeCipher={setCipher}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+            onExportExcel={handleExportExcel}
           />
         )}
 
-        {activeTab === 'wall' && <WallCalculator calc={calculation} />}
+        {activeTab === 'wall' && (
+          <WallCalculator
+            calc={calculation}
+            cipher={cipher}
+            onChangeCipher={setCipher}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+          />
+        )}
 
-        {activeTab === 'moisture' && <MoistureChart calc={calculation} />}
+        {activeTab === 'moisture' && (
+          <MoistureChart
+            calc={calculation}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+            onOpenAutoCad={() => setActiveTab('autocad')}
+          />
+        )}
 
-        {activeTab === 'roof' && <RoofCalculator calc={calculation} />}
+        {activeTab === 'roof' && (
+          <RoofCalculator
+            calc={calculation}
+            cipher={cipher}
+            onChangeCipher={setCipher}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+            onViewMoistureChart={() => setActiveTab('moisture')}
+          />
+        )}
 
-        {activeTab === 'basement' && <BasementCalculator calc={calculation} />}
+        {activeTab === 'basement' && (
+          <BasementCalculator
+            calc={calculation}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+          />
+        )}
 
-        {activeTab === 'windows' && <WindowCalculator calc={calculation} />}
+        {activeTab === 'windows' && (
+          <WindowCalculator
+            calc={calculation}
+            cipher={cipher}
+            onChangeCipher={setCipher}
+            onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
+          />
+        )}
+
+        {activeTab === 'autocad' && (
+          <AutoCadCalculator
+            calc={calculation}
+            onExportExcel={handleExportExcel}
+          />
+        )}
 
         {activeTab === 'report' && (
           <ReportPreview
@@ -163,6 +231,25 @@ export default function App() {
       <LocalModeModal
         isOpen={isLocalModalOpen}
         onClose={() => setIsLocalModalOpen(false)}
+      />
+
+      {/* Модальное окно справочника материалов СП 2.04.01-2020 */}
+      <MaterialsCatalogModal
+        isOpen={isMaterialsCatalogOpen}
+        onClose={() => setIsMaterialsCatalogOpen(false)}
+        activeCondition={calculation.internalConditions.exploitationConditions}
+      />
+
+      {/* Модальное окно просмотра и редактирования расчетных параметров */}
+      <CalculationOverridesEditor
+        isOpen={isOverridesEditorOpen}
+        onClose={() => setIsOverridesEditorOpen(false)}
+        cipher={cipher}
+        calc={calculation}
+        onUpdateCipher={(updated) => {
+          setCipher(updated);
+          showToast('Расчетные параметры и толщины обновлены!');
+        }}
       />
     </div>
   );

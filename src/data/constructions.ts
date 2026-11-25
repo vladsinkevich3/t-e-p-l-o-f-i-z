@@ -116,10 +116,11 @@ export const WALL_CONSTRUCTIONS: Record<string, WallConstructionDef> = {
     typeName: 'Трехслойная кирпичная кладка с утеплителем (глиняный кирпич)',
     increasingFactor_n: 1.84,
     layers: [
+      { name: 'Цементно-песчаная штукатурка (внутренняя)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'inside' },
       { name: 'Кирпич глиняный сплошной', materialId: 'clay_brick_solid_1800', thickness: 0.25, position: 'inside' },
       { name: 'Утеплитель', isInsulation: true, thickness: 0.12, position: 'insulation' },
       { name: 'Кирпич глиняный сплошной', materialId: 'clay_brick_solid_1800', thickness: 0.12, position: 'outside' },
-      { name: 'Цементно-песчаная штукатурка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
+      { name: 'Цементно-песчаная штукатурка (наружная)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ],
   },
   С7: {
@@ -128,10 +129,11 @@ export const WALL_CONSTRUCTIONS: Record<string, WallConstructionDef> = {
     typeName: 'Трехслойная кирпичная кладка (керамический пустотный)',
     increasingFactor_n: 1.84,
     layers: [
+      { name: 'Цементно-песчаная штукатурка (внутренняя)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'inside' },
       { name: 'Кирпич керамический пустотный', materialId: 'clay_brick_hollow_1400', thickness: 0.25, position: 'inside' },
       { name: 'Утеплитель', isInsulation: true, thickness: 0.12, position: 'insulation' },
       { name: 'Кирпич керамический пустотный', materialId: 'clay_brick_hollow_1400', thickness: 0.12, position: 'outside' },
-      { name: 'Цементно-песчаная штукатурка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
+      { name: 'Цементно-песчаная штукатурка (наружная)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ],
   },
   С8: {
@@ -140,10 +142,11 @@ export const WALL_CONSTRUCTIONS: Record<string, WallConstructionDef> = {
     typeName: 'Трехслойная кладка (глиняный + силикатный кирпич)',
     increasingFactor_n: 1.84,
     layers: [
+      { name: 'Цементно-песчаная штукатурка (внутренняя)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'inside' },
       { name: 'Кирпич сплошной глиняный', materialId: 'clay_brick_solid_1800', thickness: 0.25, position: 'inside' },
       { name: 'Утеплитель', isInsulation: true, thickness: 0.12, position: 'insulation' },
       { name: 'Кирпич силикатный 1900', materialId: 'silicate_brick_1900', thickness: 0.12, position: 'outside' },
-      { name: 'Цементно-песчаная штукатурка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
+      { name: 'Цементно-песчаная штукатурка (наружная)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ],
   },
   С9: {
@@ -152,10 +155,11 @@ export const WALL_CONSTRUCTIONS: Record<string, WallConstructionDef> = {
     typeName: 'Трехслойная силикатная кладка (1700 кг/м³)',
     increasingFactor_n: 1.84,
     layers: [
+      { name: 'Цементно-песчаная штукатурка (внутренняя)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'inside' },
       { name: 'Кирпич силикатный 1700', materialId: 'silicate_brick_1700', thickness: 0.25, position: 'inside' },
       { name: 'Утеплитель', isInsulation: true, thickness: 0.12, position: 'insulation' },
       { name: 'Кирпич силикатный 1700', materialId: 'silicate_brick_1700', thickness: 0.12, position: 'outside' },
-      { name: 'Цементно-песчаная штукатурка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
+      { name: 'Цементно-песчаная штукатурка (наружная)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ],
   },
   С10: {
@@ -164,10 +168,11 @@ export const WALL_CONSTRUCTIONS: Record<string, WallConstructionDef> = {
     typeName: 'Трехслойная кладка (глиняный + силикатный 1600 кг/м³)',
     increasingFactor_n: 1.84,
     layers: [
+      { name: 'Цементно-песчаная штукатурка (внутренняя)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'inside' },
       { name: 'Кирпич глиняный обыкновенный', materialId: 'clay_brick_solid_1800', thickness: 0.25, position: 'inside' },
       { name: 'Утеплитель', isInsulation: true, thickness: 0.12, position: 'insulation' },
       { name: 'Кирпич силикатный 1600', materialId: 'silicate_brick_1600', thickness: 0.12, position: 'outside' },
-      { name: 'Цементно-песчаная штукатурка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
+      { name: 'Цементно-песчаная штукатурка (наружная)', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ],
   },
   С11: {
@@ -428,10 +433,10 @@ export function getRoofVariant(id: string): RoofConstructionDef {
     name = `Чердачное перекрытие (П${num}, ж/б плита h=260 мм, d=180 мм)`;
     slab = { height: 260, voidDiameter: 180, spacing: 240 };
     layers = [
+      { name: 'Затирка из сложного раствора', materialId: 'complex_mortar_1700', thickness: 0.01, position: 'inside' },
       { name: 'Многопустотная железобетонная плита покрытия', materialId: 'reinforced_concrete', thickness: 0.26, position: 'inside' },
-      { name: 'Слой утеплителя', isInsulation: true, thickness: 0.25, position: 'insulation' },
-      { name: 'Цементно-песчаная стяжка', materialId: 'cement_sand_mortar_1800', thickness: 0.02, position: 'outside' },
-      { name: 'Затирка из сложного раствора', materialId: 'complex_mortar_1700', thickness: 0.01, position: 'outside' },
+      { name: 'Слой утеплителя', isInsulation: true, thickness: 0.19, position: 'insulation' },
+      { name: 'Цементно-песчаная стяжка', materialId: 'cement_sand_mortar_1800', thickness: 0.01, position: 'outside' },
     ];
   } else if (num >= 11 && num <= 15) {
     type = 'в';

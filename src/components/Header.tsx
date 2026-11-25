@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   Building2,
   Save,
+  Sliders,
+  BookOpen,
 } from 'lucide-react';
 import { FullCourseworkCalculation } from '../logic/calculations';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -26,6 +28,9 @@ interface HeaderProps {
   onOpenProjects: () => void;
   onSaveCurrentProject: () => void;
   onOpenLocalModal: () => void;
+  onOpenMaterialsCatalog?: () => void;
+  onOpenOverridesEditor?: () => void;
+  hasOverrides?: boolean;
   onExportExcel: () => void;
   onExportPdf: () => void;
   onPrint: () => void;
@@ -38,6 +43,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProjects,
   onSaveCurrentProject,
   onOpenLocalModal,
+  onOpenMaterialsCatalog,
+  onOpenOverridesEditor,
+  hasOverrides,
   onExportExcel,
   onExportPdf,
   onPrint,
@@ -97,6 +105,37 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Кнопка установки / инфо о работе на ПК */}
             <PWAInstallButton onOpenLocalModal={onOpenLocalModal} />
 
+            {/* Справочник материалов СП 2.04.01-2020 */}
+            {onOpenMaterialsCatalog && (
+              <button
+                onClick={onOpenMaterialsCatalog}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-700/50 transition cursor-pointer"
+                title="Открыть полный справочник материалов СП 2.04.01-2020 (Табл. Д.1)"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>СП 2.04.01</span>
+              </button>
+            )}
+
+            {/* Редактор параметров / расчетов */}
+            {onOpenOverridesEditor && (
+              <button
+                onClick={onOpenOverridesEditor}
+                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                  hasOverrides
+                    ? 'bg-amber-600/20 text-amber-300 border-amber-500/50 hover:bg-amber-600/30'
+                    : 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-600/30'
+                }`}
+                title="Редактирование параметров расчета, толщин утеплителя и нормативов"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Параметры</span>
+                {hasOverrides && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />
+                )}
+              </button>
+            )}
+
             {/* Сохранить вариант */}
             <button
               onClick={onSaveCurrentProject}
@@ -151,20 +190,21 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Навигационные вкладки разделов */}
         <nav className="flex space-x-1 overflow-x-auto py-2 text-xs font-medium scrollbar-none border-t border-slate-800/80">
           {[
-            { id: 'task', label: '1. Исходные данные и шифр' },
+            { id: 'task', label: '1. Исходные и шифр' },
             { id: 'wall', label: '2. Наружная стена' },
-            { id: 'moisture', label: 'График влажности (Фокин)' },
-            { id: 'roof', label: '3. Покрытие (плита)' },
-            { id: 'basement', label: '4. Техподполье (ПТП)' },
-            { id: 'windows', label: '5. Окна и двери' },
-            { id: 'report', label: '6. Итоговый отчет (ГОСТ)' },
+            { id: 'moisture', label: 'График (Фокин)' },
+            { id: 'roof', label: '3. Покрытие' },
+            { id: 'basement', label: '4. Подполье (ПТП)' },
+            { id: 'windows', label: '5. Окна (Шибеко)' },
+            { id: 'autocad', label: 'AutoCAD (графики)' },
+            { id: 'report', label: '6. Отчет (ГОСТ)' },
           ].map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
+                className={`px-2.5 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
                   isActive
                     ? 'bg-blue-600 text-white shadow'
                     : 'text-slate-400 hover:text-white hover:bg-slate-800/60'

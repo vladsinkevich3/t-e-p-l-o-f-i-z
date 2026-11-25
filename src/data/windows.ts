@@ -331,7 +331,7 @@ export const WINDOW_VARIANTS: Record<string, WindowVariantDef> = {
     glazingType: '4-14-И4-14-И4',
     R_neopr: 1.25,
     R_sv: 1.12,
-    dim: { H: 1500, B: 1400, b1: 50, b1_prime: 80, b2: 75, b3: 530, b3_val: 530, b3_prime: 540, b4: 50 } as any,
+    dim: { H: 1500, B: 1400, b1: 50, b1_prime: 80, b2: 75, b3: 530, b3_prime: 540, b4: 50 },
   },
   О35: {
     id: 'О35',
