@@ -120,7 +120,7 @@ export default function App() {
         onOpenMaterialsCatalog={() => setIsMaterialsCatalogOpen(true)}
         onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
         hasOverrides={hasOverrides}
-        onExportExcel={handleExportExcel}
+       onExportExcel={() => showToast('Отчет Excel временно отключен.')}
         onExportWord={handleExportWord}
         onExportPdf={handleExportPdf}
         onPrint={handlePrint}
@@ -148,7 +148,7 @@ export default function App() {
             calc={calculation}
             onChangeCipher={setCipher}
             onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
-            onExportExcel={handleExportExcel}
+          onExportExcel={() => showToast('Отчет Excel временно отключен.')}
             onExportWord={handleExportWord}
           />
         )}
@@ -201,7 +201,7 @@ export default function App() {
         {activeTab === 'autocad' && (
           <AutoCadCalculator
             calc={calculation}
-            onExportExcel={handleExportExcel}
+            onExportExcel={() => showToast('Отчет Excel временно отключен.')}
           />
         )}
 
