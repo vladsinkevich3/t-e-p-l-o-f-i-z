@@ -119,6 +119,7 @@ export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {false && (
               <button
                 type="button"
                 onClick={onExportExcel}
@@ -127,6 +128,7 @@ export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
                 <Download className="w-4 h-4" />
                 <span>Скачать Excel (.xlsx)</span>
               </button>
+          )}
               {onExportWord && (
                 <button
                   type="button"
