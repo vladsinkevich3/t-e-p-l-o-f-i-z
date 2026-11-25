@@ -32,6 +32,7 @@ interface HeaderProps {
   onOpenOverridesEditor?: () => void;
   hasOverrides?: boolean;
   onExportExcel: () => void;
+  onExportWord?: () => void;
   onExportPdf: () => void;
   onPrint: () => void;
 }
@@ -47,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenOverridesEditor,
   hasOverrides,
   onExportExcel,
+  onExportWord,
   onExportPdf,
   onPrint,
 }) => {
@@ -159,17 +161,29 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Экспорт Excel */}
             <button
               onClick={onExportExcel}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white shadow-sm transition"
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white shadow-sm transition cursor-pointer"
               title="Скачать расчетную книгу Excel (.xlsx)"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               <span>Excel (.xlsx)</span>
             </button>
 
+            {/* Экспорт Word (.docx) */}
+            {onExportWord && (
+              <button
+                onClick={onExportWord}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition cursor-pointer"
+                title="Скачать пояснительную записку в формате Microsoft Word (.docx) со структурой таблиц «В_отчет»"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Word (.docx)</span>
+              </button>
+            )}
+
             {/* Экспорт PDF */}
             <button
               onClick={onExportPdf}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition"
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition cursor-pointer"
               title="Скачать пояснительную записку в PDF"
             >
               <FileText className="w-3.5 h-3.5" />
@@ -179,7 +193,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Печать */}
             <button
               onClick={onPrint}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
               title="Печать расчетно-пояснительной записки"
             >
               <Printer className="w-3.5 h-3.5" />

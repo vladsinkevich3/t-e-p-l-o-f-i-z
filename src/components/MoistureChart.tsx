@@ -100,7 +100,12 @@ export const MoistureChart: React.FC<MoistureChartProps> = ({
     };
   }, [selectedConstruction, calc]);
 
-  const totalThickness = points[points.length - 1]?.x || 0.5;
+  const layersSumThickness = layers.reduce((acc, l) => acc + (l.thickness || 0), 0);
+  const totalThickness = Math.max(
+    points[points.length - 1]?.x || 0,
+    layersSumThickness,
+    0.05
+  );
 
   // Размеры SVG графика
   const width = 800;
@@ -261,43 +266,47 @@ export const MoistureChart: React.FC<MoistureChartProps> = ({
           className="w-full h-auto min-w-[700px] select-none"
         >
           {/* Фоновые вертикальные полосы слоев материала */}
-          {layers.map((layer, idx) => {
-            const startX = points[idx]?.x || 0;
-            const endX = points[idx + 1]?.x || startX + layer.thickness;
-            const x1 = getXCoord(startX);
-            const x2 = getXCoord(endX);
-            const w = Math.max(0, x2 - x1);
+          {(() => {
+            let cumX = 0;
+            return layers.map((layer, idx) => {
+              const startX = cumX;
+              const endX = cumX + (layer.thickness || 0);
+              cumX = endX;
+              const x1 = getXCoord(startX);
+              const x2 = getXCoord(endX);
+              const w = Math.max(0, x2 - x1);
 
-            // Чередование фона для визуализации слоев
-            const bgFill =
-              idx % 2 === 0 ? 'rgba(51, 65, 85, 0.15)' : 'rgba(30, 41, 59, 0.35)';
+              // Чередование фона для визуализации слоев
+              const bgFill =
+                idx % 2 === 0 ? 'rgba(51, 65, 85, 0.15)' : 'rgba(30, 41, 59, 0.35)';
 
-            return (
-              <g key={idx}>
-                <rect
-                  x={x1}
-                  y={padding.top}
-                  width={w}
-                  height={plotHeight}
-                  fill={bgFill}
-                  stroke="#334155"
-                  strokeWidth="0.5"
-                  strokeDasharray="2,2"
-                />
-                {/* Подпись слоя наверху */}
-                <text
-                  x={x1 + w / 2}
-                  y={padding.top - 12}
-                  fill="#94a3b8"
-                  fontSize="9"
-                  textAnchor="middle"
-                  className="font-medium"
-                >
-                  {w > 35 ? layer.name.substring(0, 16) : `№${idx + 1}`}
-                </text>
-              </g>
-            );
-          })}
+              return (
+                <g key={idx}>
+                  <rect
+                    x={x1}
+                    y={padding.top}
+                    width={w}
+                    height={plotHeight}
+                    fill={bgFill}
+                    stroke="#334155"
+                    strokeWidth="0.5"
+                    strokeDasharray="2,2"
+                  />
+                  {/* Подпись слоя наверху */}
+                  <text
+                    x={x1 + w / 2}
+                    y={padding.top - 12}
+                    fill="#94a3b8"
+                    fontSize="9"
+                    textAnchor="middle"
+                    className="font-medium"
+                  >
+                    {w > 35 ? `${layer.name.substring(0, 14)} (${Math.round(layer.thickness * 1000)} мм)` : `№${idx + 1}`}
+                  </text>
+                </g>
+              );
+            });
+          })()}
 
           {/* Оси координат и сетка */}
           {[0, 500, 1000, 1500, 2000].map((pressureVal) => {

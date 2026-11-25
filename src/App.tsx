@@ -23,6 +23,7 @@ import { NormativeWarningBanner } from './components/NormativeWarningBanner';
 import { DecodedCipher, PDF_REFERENCE_CIPHER } from './logic/decodeCipher';
 import { calculateCoursework } from './logic/calculations';
 import { exportCourseworkToExcel } from './export/excelExport';
+import { exportCourseworkToWord } from './export/wordExport';
 import { exportReportToPdf } from './export/pdfExport';
 import { saveProject } from './db/projectsDb';
 
@@ -54,10 +55,21 @@ export default function App() {
   const handleExportExcel = async () => {
     try {
       await exportCourseworkToExcel(calculation);
-      showToast('Автономная книга Excel (.xlsx, 16 листов, графики Шибеко и AutoCAD) успешно сформирована!');
+      showToast('Автономная книга Excel (.xlsx, 18 листов, В_отчет, Формулы_расчета, графики Шибеко и AutoCAD) сформирована!');
     } catch (err) {
       console.error('Ошибка экспорта в Excel:', err);
       showToast('Не удалось сформировать файл Excel. Попробуйте снова.');
+    }
+  };
+
+  // Экспорт в Microsoft Word (.docx)
+  const handleExportWord = async () => {
+    try {
+      await exportCourseworkToWord(calculation);
+      showToast('Пояснительная записка Microsoft Word (.docx) со структурой таблиц «В_отчет» успешно сформирована!');
+    } catch (err) {
+      console.error('Ошибка экспорта в Word:', err);
+      showToast('Не удалось сформировать файл Word (.docx). Попробуйте снова.');
     }
   };
 
@@ -109,6 +121,7 @@ export default function App() {
         onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
         hasOverrides={hasOverrides}
         onExportExcel={handleExportExcel}
+        onExportWord={handleExportWord}
         onExportPdf={handleExportPdf}
         onPrint={handlePrint}
       />
@@ -136,6 +149,7 @@ export default function App() {
             onChangeCipher={setCipher}
             onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
             onExportExcel={handleExportExcel}
+            onExportWord={handleExportWord}
           />
         )}
 
@@ -169,6 +183,8 @@ export default function App() {
         {activeTab === 'basement' && (
           <BasementCalculator
             calc={calculation}
+            cipher={cipher}
+            onChangeCipher={setCipher}
             onOpenOverridesEditor={() => setIsOverridesEditorOpen(true)}
           />
         )}
@@ -194,6 +210,8 @@ export default function App() {
             calc={calculation}
             onPrint={handlePrint}
             onExportPdf={handleExportPdf}
+            onExportWord={handleExportWord}
+            onExportExcel={handleExportExcel}
           />
         )}
       </main>

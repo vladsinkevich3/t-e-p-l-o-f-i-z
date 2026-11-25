@@ -2,7 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Справочник пароизоляционных материалов (Приложение Н пособия А. С. Шибеко, СП 2.04.01-2020)
- * Поддерживает выбор материала и произвольной толщины (мм) с пропорциональным расчетом Rп.
+ * Поддерживает выбор материала, произвольной толщины (мм), расположения по нормам СП 2.04.01-2020 п. 10.6
+ * и ввод собственной (пользовательской) пароизоляции.
  */
 
 export interface VaporBarrierMaterial {
@@ -19,8 +20,160 @@ export interface VaporBarrierMaterial {
   lambda: number;
   /** Коэффициент теплоусвоения s, Вт/(м²·°C) */
   s: number;
+  /** Плотность материала ρ, кг/м³ */
+  density: number;
   /** Примечание / нормативный документ */
   note: string;
+}
+
+export type WallVaporBarrierPlacement =
+  | 'before_insulation'
+  | 'inner_surface'
+  | 'after_layer_1'
+  | 'after_layer_2'
+  | 'after_layer_3'
+  | 'after_layer_4';
+
+export type RoofVaporBarrierPlacement =
+  | 'before_insulation'
+  | 'inner_surface'
+  | 'after_plaster'
+  | 'after_insulation';
+
+export interface VaporBarrierPlacementOption<T extends string> {
+  id: T;
+  label: string;
+  excelLabel: string;
+  isNormative: boolean;
+  note: string;
+}
+
+export const WALL_VB_PLACEMENTS: VaporBarrierPlacementOption<WallVaporBarrierPlacement>[] = [
+  {
+    id: 'before_insulation',
+    label: 'По нормам СП 2.04.01: перед утеплителем (с теплой стороны)',
+    excelLabel: 'Перед утеплителем (по нормам СП 2.04.01)',
+    isNormative: true,
+    note: 'Рекомендуется по СП 2.04.01-2020 п. 10.6 и Шибеко п. 7.1.3 — отсекает пар до входа в зону низких температур утеплителя',
+  },
+  {
+    id: 'inner_surface',
+    label: 'На внутренней поверхности стены (перед слоем 1)',
+    excelLabel: 'На внутр. поверхности (перед слоем 1)',
+    isNormative: false,
+    note: 'Укладка пароизоляционного покрытия прямо со стороны помещения (например, пароизоляционная окраска/мембрана)',
+  },
+  {
+    id: 'after_layer_1',
+    label: 'После слоя 1 (под внутренней отделкой)',
+    excelLabel: 'После слоя 1',
+    isNormative: false,
+    note: 'Укладка сразу за внутренней штукатуркой / облицовкой (защищает несущую кладку и утеплитель)',
+  },
+  {
+    id: 'after_layer_2',
+    label: 'После слоя 2',
+    excelLabel: 'После слоя 2',
+    isNormative: false,
+    note: 'Укладка после 2-го конструктивного слоя от внутренней поверхности стены',
+  },
+  {
+    id: 'after_layer_3',
+    label: 'После слоя 3',
+    excelLabel: 'После слоя 3',
+    isNormative: false,
+    note: 'Укладка после 3-го конструктивного слоя (проверка переноса плоскости конденсации)',
+  },
+  {
+    id: 'after_layer_4',
+    label: 'После слоя 4',
+    excelLabel: 'После слоя 4',
+    isNormative: false,
+    note: 'Укладка после 4-го конструктивного слоя (ближе к наружной стороне — риск запирания влаги)',
+  },
+];
+
+export const ROOF_VB_PLACEMENTS: VaporBarrierPlacementOption<RoofVaporBarrierPlacement>[] = [
+  {
+    id: 'before_insulation',
+    label: 'По нормам СП 2.04.01: поверх ж/б плиты перед утеплителем',
+    excelLabel: 'Перед утеплителем (по нормам СП 2.04.01)',
+    isNormative: true,
+    note: 'Нормативное расположение по СП 2.04.01-2020 п. 10.6 — пароизоляция укладывается поверх ж/б плиты с теплой стороны утеплителя',
+  },
+  {
+    id: 'inner_surface',
+    label: 'На внутренней поверхности потолка (перед отделкой)',
+    excelLabel: 'На внутр. поверхности потолка',
+    isNormative: false,
+    note: 'Пароизоляция наносится непосредственно на внутреннюю поверхность потолка со стороны помещения',
+  },
+  {
+    id: 'after_plaster',
+    label: 'После внутренней отделки (под ж/б плитой)',
+    excelLabel: 'После внутр. отделки (под плитой)',
+    isNormative: false,
+    note: 'Укладка между отделочным слоем потолка и железобетонной плитой перекрытия',
+  },
+  {
+    id: 'after_insulation',
+    label: 'После утеплителя (под стяжкой — проверка ошибки монтажа)',
+    excelLabel: 'После утеплителя (ошибочное расположение)',
+    isNormative: false,
+    note: 'Нарушение норм: пароизоляция с холодной стороны утеплителя запирает водяной пар и вызывает конденсацию!',
+  },
+];
+
+export function getWallPlacementOption(
+  placement?: string
+): VaporBarrierPlacementOption<WallVaporBarrierPlacement> {
+  return (
+    WALL_VB_PLACEMENTS.find((p) => p.id === placement) ?? WALL_VB_PLACEMENTS[0]
+  );
+}
+
+export function getRoofPlacementOption(
+  placement?: string
+): VaporBarrierPlacementOption<RoofVaporBarrierPlacement> {
+  return (
+    ROOF_VB_PLACEMENTS.find((p) => p.id === placement) ?? ROOF_VB_PLACEMENTS[0]
+  );
+}
+
+export interface CustomVaporBarrierParams {
+  name: string;
+  thicknessMm: number;
+  /** Способ задания паропроницаемости: прямое Rп (м²·ч·Па/мг) или коэффициент μ (мг/(м·ч·Па)) */
+  inputMode?: 'rp' | 'mu';
+  R_p?: number;
+  mu?: number;
+  lambda?: number;
+  s?: number;
+  density?: number;
+}
+
+export const DEFAULT_CUSTOM_VAPOR_BARRIER: CustomVaporBarrierParams = {
+  name: 'Своя пароизоляция',
+  thicknessMm: 1.0,
+  inputMode: 'rp',
+  R_p: 5.0,
+  mu: 0.0002,
+  lambda: 0.2,
+  s: 3.5,
+  density: 1000,
+};
+
+export interface ResolvedVaporBarrier {
+  materialId: string;
+  name: string;
+  shortName: string;
+  thicknessMm: number;
+  R_p: number;
+  mu: number;
+  lambda: number;
+  s: number;
+  density: number;
+  isCustom: boolean;
 }
 
 export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
@@ -33,6 +186,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0,
     lambda: 0.33,
     s: 0,
+    density: 0,
     note: 'Пароизоляционный слой отсутствует',
   },
   {
@@ -44,6 +198,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 7.3,
     lambda: 0.33,
     s: 3.5,
+    density: 920,
     note: 'Прил. Н: δ = 0,16 мм, Rп = 7,3 м²·ч·Па/мг',
   },
   {
@@ -55,6 +210,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 14.6,
     lambda: 0.33,
     s: 3.5,
+    density: 920,
     note: 'Двойной слой ПЭ: δ = 0,32 мм, Rп = 14,6 м²·ч·Па/мг',
   },
   {
@@ -66,6 +222,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.33,
     lambda: 0.17,
     s: 3.5,
+    density: 600,
     note: 'Прил. Н: δ = 0,4 мм, Rп = 0,33 м²·ч·Па/мг',
   },
   {
@@ -77,6 +234,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 1.1,
     lambda: 0.17,
     s: 3.5,
+    density: 600,
     note: 'Прил. Н: δ = 1,5 мм, Rп = 1,1 м²·ч·Па/мг',
   },
   {
@@ -88,6 +246,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.4,
     lambda: 0.17,
     s: 3.5,
+    density: 600,
     note: 'Прил. Н: δ = 1,9 мм, Rп = 0,40 м²·ч·Па/мг',
   },
   {
@@ -99,6 +258,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.3,
     lambda: 0.17,
     s: 3.5,
+    density: 1000,
     note: 'Прил. Н: δ = 2,0 мм, Rп = 0,30 м²·ч·Па/мг',
   },
   {
@@ -110,6 +270,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.48,
     lambda: 0.17,
     s: 3.5,
+    density: 1000,
     note: 'Прил. Н: δ = 4,0 мм, Rп = 0,48 м²·ч·Па/мг',
   },
   {
@@ -121,6 +282,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.64,
     lambda: 0.2,
     s: 3.0,
+    density: 1300,
     note: 'Прил. Н: δ = 0,5 мм, Rп = 0,64 м²·ч·Па/мг',
   },
   {
@@ -132,6 +294,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.48,
     lambda: 0.2,
     s: 3.0,
+    density: 1300,
     note: 'Прил. Н: δ = 0,5 мм, Rп = 0,48 м²·ч·Па/мг',
   },
   {
@@ -143,6 +306,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.6,
     lambda: 0.17,
     s: 3.5,
+    density: 1200,
     note: 'Прил. Н: δ = 2,0 мм, Rп = 0,60 м²·ч·Па/мг',
   },
   {
@@ -154,6 +318,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 0.64,
     lambda: 0.17,
     s: 3.5,
+    density: 1150,
     note: 'Прил. Н: δ = 1,0 мм, Rп = 0,64 м²·ч·Па/мг',
   },
   {
@@ -165,6 +330,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 1.1,
     lambda: 0.17,
     s: 3.5,
+    density: 1150,
     note: 'Прил. Н: δ = 2,0 мм, Rп = 1,10 м²·ч·Па/мг',
   },
   {
@@ -176,6 +342,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 35.0,
     lambda: 0.17,
     s: 3.5,
+    density: 950,
     note: 'Усиленная пароизоляция: δ = 1,5 мм, Rп = 35,0 м²·ч·Па/мг',
   },
   {
@@ -187,6 +354,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 3.0,
     lambda: 0.76,
     s: 9.6,
+    density: 1650,
     note: 'ТУ BY / ilmax: полимерминеральная пароизоляция (слой 1–1,5 мм, Rп ≥ 3,0 м²·ч·Па/мг при δ = 1 мм)',
   },
   {
@@ -198,6 +366,7 @@ export const VAPOR_BARRIER_MATERIALS: VaporBarrierMaterial[] = [
     baseRp: 2.0,
     lambda: 0.2,
     s: 3.0,
+    density: 1450,
     note: 'ТУ BY / ilmax: акриловый пароизоляционный состав для швов и примыканий (δ = 3 мм, Rп ≥ 2,0 м²·ч·Па/мг)',
   },
 ];
@@ -221,4 +390,72 @@ export function calculateVaporBarrierRp(materialId?: string, thicknessMm?: numbe
   const effThickness = thicknessMm !== undefined && thicknessMm >= 0 ? thicknessMm : mat.defaultThicknessMm;
   if (effThickness <= 0) return 0;
   return +(mat.baseRp * (effThickness / mat.baseThicknessMm)).toFixed(3);
+}
+
+/**
+ * Универсальный резолвер пароизоляции: поддерживает и справочник Приложения Н, и пользовательский материал ('custom').
+ */
+export function resolveVaporBarrier(config?: {
+  materialId?: string;
+  thicknessMm?: number;
+  custom?: CustomVaporBarrierParams;
+}): ResolvedVaporBarrier | null {
+  if (!config || !config.materialId || config.materialId === 'none') return null;
+
+  if (config.materialId === 'custom') {
+    const c = { ...DEFAULT_CUSTOM_VAPOR_BARRIER, ...(config.custom || {}) };
+    const thkMm =
+      config.thicknessMm !== undefined && config.thicknessMm > 0
+        ? config.thicknessMm
+        : c.thicknessMm > 0
+        ? c.thicknessMm
+        : 1.0;
+    const thkM = thkMm / 1000;
+    const mode = c.inputMode ?? 'rp';
+    let rpVal = 0;
+    let muVal = 0;
+    if (mode === 'mu') {
+      muVal = c.mu && c.mu > 0 ? c.mu : 0.0002;
+      rpVal = +(thkM / muVal).toFixed(3);
+    } else {
+      rpVal = c.R_p !== undefined && c.R_p > 0 ? +c.R_p.toFixed(3) : 0;
+      muVal = rpVal > 0 ? +(thkM / rpVal).toFixed(7) : 0;
+    }
+    if (rpVal <= 0 || thkMm <= 0) return null;
+    const cleanName = (c.name || '').trim() || 'Своя пароизоляция';
+    return {
+      materialId: 'custom',
+      name: cleanName,
+      shortName: cleanName.length > 26 ? cleanName.slice(0, 26) + '…' : cleanName,
+      thicknessMm: thkMm,
+      R_p: rpVal,
+      mu: muVal,
+      lambda: c.lambda && c.lambda > 0 ? c.lambda : 0.2,
+      s: c.s !== undefined && c.s >= 0 ? c.s : 3.5,
+      density: c.density !== undefined && c.density >= 0 ? c.density : 1000,
+      isCustom: true,
+    };
+  }
+
+  const mat = getVaporBarrierById(config.materialId);
+  if (mat.id === 'none') return null;
+  const thkMm =
+    config.thicknessMm !== undefined && config.thicknessMm > 0
+      ? config.thicknessMm
+      : mat.defaultThicknessMm;
+  const rpVal = calculateVaporBarrierRp(mat.id, thkMm);
+  if (rpVal <= 0 || thkMm <= 0) return null;
+  const thkM = thkMm / 1000;
+  return {
+    materialId: mat.id,
+    name: mat.name,
+    shortName: mat.shortName,
+    thicknessMm: thkMm,
+    R_p: rpVal,
+    mu: +(thkM / rpVal).toFixed(7),
+    lambda: mat.lambda,
+    s: mat.s,
+    density: mat.density,
+    isCustom: false,
+  };
 }

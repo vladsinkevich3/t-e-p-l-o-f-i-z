@@ -32,9 +32,15 @@ import {
   WINDOW_AIR_PERMEABILITY_CLASSES,
   DELTA_C_AERODYNAMIC,
   WindTerrainType,
+  getPipeLinearHeatLoss,
 } from '../data/normative';
-import { getVaporBarrierById, calculateVaporBarrierRp } from '../data/vaporBarriers';
-import { DecodedCipher, DEFAULT_CIPHER } from './decodeCipher';
+import {
+  resolveVaporBarrier,
+  getWallPlacementOption,
+  getRoofPlacementOption,
+  RoofVaporBarrierPlacement,
+} from '../data/vaporBarriers';
+import { DecodedCipher, DEFAULT_CIPHER, VaporBarrierConfig } from './decodeCipher';
 import {
   BuildingTypeId,
   BUILDING_TYPES,
@@ -48,6 +54,7 @@ import {
 export interface CalculatedLayer {
   name: string;
   materialName: string;
+  density?: number; // плотность ρ, кг/м³
   thickness: number; // м
   lambda: number; // Вт/(м·°С)
   R: number; // м²·°С/Вт
@@ -61,6 +68,7 @@ export interface CalculatedLayer {
   E_outside: number; // Па
   e_inside: number; // Па
   e_outside: number; // Па
+  isVaporBarrier?: boolean;
 }
 
 export interface CrossSectionTemperaturePoint {
@@ -77,6 +85,7 @@ export interface CrossSectionTemperaturePoint {
   e_partial: number; // e(x), Па
   delta_margin: number; // E - e, Па (запас до конденсации)
   isInsulationMidpoint?: boolean;
+  isVaporBarrier?: boolean;
 }
 
 export interface RoofSectionProfileData {
@@ -104,6 +113,7 @@ export interface RoofSectionProfileData {
     isInsulationMidpoint?: boolean;
   }[];
   condensationRisk: boolean;
+  total_Rp: number;
 }
 
 export interface DesignWinterTempSelection {
@@ -217,7 +227,33 @@ export interface AppliedVaporBarrierInfo {
   shortName: string;
   thicknessMm: number;
   R_p: number;
+  mu?: number;
+  lambda?: number;
+  s?: number;
+  density?: number;
+  placement: string;
+  placementLabel: string;
+  isNormativePlacement: boolean;
   isAuto?: boolean;
+  isCustom?: boolean;
+}
+
+export interface WallMoistureVariantData {
+  vaporBarrier: AppliedVaporBarrierInfo | null;
+  layers: CalculatedLayer[];
+  R_total: number;
+  total_R_p: number;
+  condensationRisk: boolean;
+  moisturePoints: {
+    x: number;
+    name: string;
+    temp: number;
+    E: number;
+    e: number;
+    isMidpoint?: boolean;
+    isInsulationMidpoint?: boolean;
+  }[];
+  crossSectionProfile: CrossSectionTemperaturePoint[];
 }
 
 export interface WallCalculationResult {
@@ -242,6 +278,7 @@ export interface WallCalculationResult {
   tau_v_min: number; // минимальная температура внутренней поверхности по Шибеко (5.1), °C
   dew_point: number; // точка росы tр
   condensationRisk: boolean;
+  needsVaporBarrier: boolean;
   isRCompliant: boolean; // R_т >= R_т.тр (с учетом последних норм СН 2.04.02-2020)
   isCompliant: boolean;
   total_R_p: number; // суммарное сопротивление паропроницанию стены Rп (с учетом 1/37 и 1/77)
@@ -256,6 +293,8 @@ export interface WallCalculationResult {
     isInsulationMidpoint?: boolean;
   }[];
   crossSectionProfile: CrossSectionTemperaturePoint[];
+  unprotectedVariant: WallMoistureVariantData;
+  protectedVariant: WallMoistureVariantData | null;
 }
 
 export interface RoofCalculationResult {
@@ -304,6 +343,11 @@ export interface RoofCalculationResult {
   moistureCondensationRisk: boolean;
   worstSection: RoofSectionProfileData;
   voidSection: RoofSectionProfileData;
+  unprotectedWorstSection: RoofSectionProfileData;
+  unprotectedVoidSection: RoofSectionProfileData;
+  protectedWorstSection: RoofSectionProfileData;
+  protectedVoidSection: RoofSectionProfileData;
+  protectedVaporBarrier: AppliedVaporBarrierInfo | null;
   activeSectionType: 'worst' | 'void';
   moisturePoints: {
     x: number;
@@ -390,6 +434,8 @@ export interface WindowCalculationResult {
   area_opaque: number; // м²
   R_opaque: number;
   R_transparent: number;
+  F_over_R_opaque: number;
+  F_over_R_transparent: number;
   sum_F_over_R: number;
   R_actual: number;
   R_norm: number;
@@ -627,11 +673,12 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
   const insLambda = ov.wallInsulationConductivity ?? (expCond === 'А' ? insDef.lambda_A : insDef.lambda_B);
   const insS = expCond === 'А' ? insDef.s_A : insDef.s_B;
 
-  // Вспомогательная функция получения теплопроводности λ и паропроницаемости μ
+  // Вспомогательная функция получения теплопроводности λ, плотности ρ и паропроницаемости μ
   const getMaterialData = (matId?: string, isInsulation?: boolean) => {
     if (isInsulation || matId === 'insulation') {
       return {
         name: insDef.name,
+        density: insDef.density,
         lambda: insLambda,
         s: insS,
         mu: insDef.mu,
@@ -641,6 +688,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       const mat = MATERIALS[matId];
       return {
         name: mat.name,
+        density: mat.density,
         lambda: expCond === 'А' ? mat.lambda_A : mat.lambda_B,
         s: expCond === 'А' ? mat.s_A : mat.s_B,
         mu: mat.mu,
@@ -648,6 +696,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     }
     return {
       name: 'Материал слоя',
+      density: 1800,
       lambda: 0.81,
       s: 9.9,
       mu: 0.11,
@@ -677,6 +726,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         customMu: undefined as number | undefined,
       }));
 
+  const wallInsLayers = wallLayersConfig.filter((l) => l.isInsulation || l.materialId === 'insulation');
+
   // Вычисляем сопротивление без утеплителя
   let R_without_ins = 1 / alpha_v_wall + 1 / alpha_n_ext;
   for (const l of wallLayersConfig) {
@@ -693,84 +744,122 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
 
   // Требуемая толщина утеплителя
   const delta_wall_ins_calc = (R_wall_req - R_without_ins) * insLambda;
+  // Если пользователь задал кастомные слои стены с утеплителем (например, стена 610 мм), учитываем толщину из слоев
+  const customWallInsLayer =
+    ov.wallCustomLayers && ov.wallCustomLayers.length > 0
+      ? ov.wallCustomLayers.find(
+          (cl) => cl.isInsulation || cl.name.toLowerCase().includes('утепл')
+        )
+      : undefined;
   // Округляем до 1 см вверх (кратно 0.01 м) либо берем переопределение
-  const delta_wall_ins_adopted = ov.wallInsulationThickness !== undefined
-    ? ov.wallInsulationThickness
-    : +(Math.ceil(delta_wall_ins_calc * 100) / 100).toFixed(2);
+  const delta_wall_ins_adopted =
+    ov.wallInsulationThickness !== undefined
+      ? ov.wallInsulationThickness
+      : customWallInsLayer && customWallInsLayer.thickness > 0
+      ? customWallInsLayer.thickness
+      : +(Math.ceil(delta_wall_ins_calc * 100) / 100).toFixed(2);
 
   // Фактическое термическое сопротивление (точное и округленное)
-  // Учет выбираемого слоя пароизоляции для наружной стены (укладывается перед утеплителем с теплой стороны)
+  // Учет выбираемого или пользовательского слоя пароизоляции для наружной стены
+  // (по нормам СП 2.04.01-2020 п. 10.6 по умолчанию укладывается с теплой стороны перед утеплителем,
+  // но пользователь может изменить расположение)
   let wallVaporBarrierInfo: AppliedVaporBarrierInfo | null = null;
   let wallVbLayer: CalculatedLayer | null = null;
   let wallVbRExact = 0;
   let wallVbRpExact = 0;
-  if (ov.wallVaporBarrier && ov.wallVaporBarrier.materialId && ov.wallVaporBarrier.materialId !== 'none') {
-    const vbMat = getVaporBarrierById(ov.wallVaporBarrier.materialId);
-    const thkMm =
-      ov.wallVaporBarrier.thicknessMm !== undefined && ov.wallVaporBarrier.thicknessMm > 0
-        ? ov.wallVaporBarrier.thicknessMm
-        : vbMat.defaultThicknessMm;
-    const rpVal = calculateVaporBarrierRp(vbMat.id, thkMm);
-    if (rpVal > 0 && thkMm > 0) {
-      const thkM = thkMm / 1000;
-      wallVbRExact = thkM / vbMat.lambda;
-      wallVbRpExact = rpVal;
-      const rVb = +wallVbRExact.toFixed(4);
-      const dVb = +(wallVbRExact * vbMat.s).toFixed(3);
-      wallVbLayer = {
-        name: `Пароизоляция (${vbMat.shortName}, δ=${thkMm} мм)`,
-        materialName: vbMat.name,
-        thickness: thkM,
-        lambda: vbMat.lambda,
-        R: rVb,
-        s: vbMat.s,
-        D: dVb,
-        mu: +(thkM / rpVal).toFixed(7),
-        R_p: rpVal,
-        tempInside: 0,
-        tempOutside: 0,
-        E_inside: 0,
-        E_outside: 0,
-        e_inside: 0,
-        e_outside: 0,
-      };
-      wallVaporBarrierInfo = {
-        materialId: vbMat.id,
-        name: vbMat.name,
-        shortName: vbMat.shortName,
-        thicknessMm: thkMm,
-        R_p: rpVal,
-        isAuto: false,
-      };
-    }
+  const wallVbPlacementOpt = getWallPlacementOption(ov.wallVaporBarrier?.placement);
+  const resolvedWallVb = resolveVaporBarrier(ov.wallVaporBarrier);
+  if (resolvedWallVb) {
+    const thkM = resolvedWallVb.thicknessMm / 1000;
+    wallVbRExact = thkM / resolvedWallVb.lambda;
+    wallVbRpExact = resolvedWallVb.R_p;
+    const rVb = +wallVbRExact.toFixed(4);
+    const dVb = +(wallVbRExact * resolvedWallVb.s).toFixed(3);
+    wallVbLayer = {
+      name: `Пароизоляция (${resolvedWallVb.shortName}, δ=${resolvedWallVb.thicknessMm} мм)`,
+      materialName: resolvedWallVb.name,
+      density: resolvedWallVb.density,
+      thickness: thkM,
+      lambda: resolvedWallVb.lambda,
+      R: rVb,
+      s: resolvedWallVb.s,
+      D: dVb,
+      mu: resolvedWallVb.mu,
+      R_p: resolvedWallVb.R_p,
+      tempInside: 0,
+      tempOutside: 0,
+      E_inside: 0,
+      E_outside: 0,
+      e_inside: 0,
+      e_outside: 0,
+      isVaporBarrier: true,
+    };
+    wallVaporBarrierInfo = {
+      materialId: resolvedWallVb.materialId,
+      name: resolvedWallVb.name,
+      shortName: resolvedWallVb.shortName,
+      thicknessMm: resolvedWallVb.thicknessMm,
+      R_p: resolvedWallVb.R_p,
+      mu: resolvedWallVb.mu,
+      lambda: resolvedWallVb.lambda,
+      s: resolvedWallVb.s,
+      density: resolvedWallVb.density,
+      placement: wallVbPlacementOpt.id,
+      placementLabel: wallVbPlacementOpt.label,
+      isNormativePlacement: wallVbPlacementOpt.isNormative,
+      isAuto: false,
+      isCustom: resolvedWallVb.isCustom,
+    };
   }
 
   const R_wall_total_exact =
     R_without_ins + delta_wall_ins_adopted / insLambda + wallVbRExact;
   const R_wall_total = +R_wall_total_exact.toFixed(2);
 
+  // Определяем индекс вставки слоя пароизоляции стены по выбранному расположению
+  const firstWallInsIdx = wallLayersConfig.findIndex(
+    (l) => l.isInsulation || l.materialId === 'insulation'
+  );
+  let wallVbInsertIndex = firstWallInsIdx >= 0 ? firstWallInsIdx : wallLayersConfig.length;
+  if (wallVbPlacementOpt.id === 'inner_surface') {
+    wallVbInsertIndex = 0;
+  } else if (wallVbPlacementOpt.id === 'after_layer_1') {
+    wallVbInsertIndex = Math.min(1, wallLayersConfig.length);
+  } else if (wallVbPlacementOpt.id === 'after_layer_2') {
+    wallVbInsertIndex = Math.min(2, wallLayersConfig.length);
+  } else if (wallVbPlacementOpt.id === 'after_layer_3') {
+    wallVbInsertIndex = Math.min(3, wallLayersConfig.length);
+  } else if (wallVbPlacementOpt.id === 'after_layer_4') {
+    wallVbInsertIndex = Math.min(4, wallLayersConfig.length);
+  }
+
   // Расчет слоев для тепловой инерции D (храним также точные некругленные R_exact, D_exact, Rp_exact)
   let D_wall_exact = 0;
   const wallLayersCalculated: CalculatedLayer[] = [];
   const wallLayersExactMeta: { R_exact: number; s: number; D_exact: number; Rp_exact: number }[] = [];
-  let wallVbInserted = false;
 
-  for (const l of wallLayersConfig) {
-    const isIns = l.isInsulation || l.materialId === 'insulation';
-    if (isIns && wallVbLayer && !wallVbInserted) {
-      const dVbExact = wallVbRExact * wallVbLayer.s;
-      D_wall_exact += dVbExact;
-      wallLayersCalculated.push(wallVbLayer);
-      wallLayersExactMeta.push({
-        R_exact: wallVbRExact,
-        s: wallVbLayer.s,
-        D_exact: dVbExact,
-        Rp_exact: wallVbRpExact,
-      });
-      wallVbInserted = true;
+  const pushWallVbLayer = () => {
+    if (!wallVbLayer) return;
+    const dVbExact = wallVbRExact * wallVbLayer.s;
+    D_wall_exact += dVbExact;
+    wallLayersCalculated.push(wallVbLayer);
+    wallLayersExactMeta.push({
+      R_exact: wallVbRExact,
+      s: wallVbLayer.s,
+      D_exact: dVbExact,
+      Rp_exact: wallVbRpExact,
+    });
+  };
+
+  wallLayersConfig.forEach((l, idx) => {
+    if (wallVbLayer && idx === wallVbInsertIndex) {
+      pushWallVbLayer();
     }
 
-    const d = isIns ? delta_wall_ins_adopted : l.thickness;
+    const isIns = l.isInsulation || l.materialId === 'insulation';
+    const d = isIns
+      ? (wallInsLayers.length === 1 || l.thickness <= 0 ? delta_wall_ins_adopted : l.thickness)
+      : l.thickness;
     const baseMat = getMaterialData(l.materialId, isIns);
     const lambda = l.customLambda ?? baseMat.lambda;
     const s = l.customS ?? baseMat.s;
@@ -788,6 +877,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     wallLayersCalculated.push({
       name: l.name,
       materialName: isIns ? insDef.name : baseMat.name,
+      density: baseMat.density,
       thickness: d,
       lambda,
       R: R_layer,
@@ -808,17 +898,10 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       D_exact,
       Rp_exact,
     });
-  }
-  if (wallVbLayer && !wallVbInserted) {
-    const dVbExact = wallVbRExact * wallVbLayer.s;
-    D_wall_exact += dVbExact;
-    wallLayersCalculated.push(wallVbLayer);
-    wallLayersExactMeta.push({
-      R_exact: wallVbRExact,
-      s: wallVbLayer.s,
-      D_exact: dVbExact,
-      Rp_exact: wallVbRpExact,
-    });
+  });
+
+  if (wallVbLayer && wallVbInsertIndex >= wallLayersConfig.length) {
+    pushWallVbLayer();
   }
   const D_wall = +D_wall_exact.toFixed(2);
 
@@ -1034,12 +1117,23 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const E_h = getSaturatedVaporPressure(t_h_exact);
     const e_h = +(e_v_exact - ((e_v_exact - e_n_exact) / total_R_p_wall_exact) * cumWallRp).toFixed(2);
 
+    const thkMmVal = layer.thickness * 1000;
+    const formattedThkMm = thkMmVal < 10 ? +thkMmVal.toFixed(2) : Math.round(thkMmVal);
+    const formattedCoordX =
+      Math.abs(cumWallX - Math.round(cumWallX)) < 0.001
+        ? Math.round(cumWallX)
+        : +cumWallX.toFixed(2);
+
     wallCrossSection.push({
       index: sectionIndex++,
-      planeName: isLastLayer ? `Наружная поверхность τн (${layer.name})` : `Граница слоя: ${layer.name}`,
+      planeName: isLastLayer
+        ? `Наружная поверхность τн (${layer.name})`
+        : layer.isVaporBarrier
+        ? `Граница пароизоляции: ${layer.name}`
+        : `Граница слоя: ${layer.name}`,
       layerName: layer.name,
-      coord_x_mm: Math.round(cumWallX),
-      thickness_mm: Math.round(layer.thickness * 1000),
+      coord_x_mm: formattedCoordX,
+      thickness_mm: formattedThkMm,
       R_layer: layer.R,
       R_cumulative: +cumWallR.toFixed(3),
       temp_winter: t_w,
@@ -1047,6 +1141,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       E_sat: E_h,
       e_partial: e_h,
       delta_margin: +(E_h - e_h).toFixed(1),
+      isVaporBarrier: Boolean(layer.isVaporBarrier),
     });
   });
 
@@ -1065,6 +1160,364 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     e_partial: e_n,
     delta_margin: +(getSaturatedVaporPressure(t_n_moisture) - e_n).toFixed(1),
   });
+
+  // Вспомогательная функция для расчета варианта влажностного режима стены (без пароизоляции / с пароизоляцией)
+  const buildWallMoistureVariant = (
+    vbCfg?: VaporBarrierConfig | null,
+    isAutoVb = false
+  ): WallMoistureVariantData => {
+    const resolvedVb = vbCfg ? resolveVaporBarrier(vbCfg) : null;
+    const plOpt = getWallPlacementOption(vbCfg?.placement);
+    let vLayer: CalculatedLayer | null = null;
+    let vInfo: AppliedVaporBarrierInfo | null = null;
+    let vRExact = 0;
+    let vRpExact = 0;
+
+    if (resolvedVb) {
+      const thkM = resolvedVb.thicknessMm / 1000;
+      vRExact = thkM / resolvedVb.lambda;
+      vRpExact = resolvedVb.R_p;
+      vLayer = {
+        name: `Пароизоляция (${resolvedVb.shortName}, δ=${resolvedVb.thicknessMm} мм)`,
+        materialName: resolvedVb.name,
+        density: resolvedVb.density,
+        thickness: thkM,
+        lambda: resolvedVb.lambda,
+        R: +vRExact.toFixed(4),
+        s: resolvedVb.s,
+        D: +(vRExact * resolvedVb.s).toFixed(3),
+        mu: resolvedVb.mu,
+        R_p: resolvedVb.R_p,
+        tempInside: 0,
+        tempOutside: 0,
+        E_inside: 0,
+        E_outside: 0,
+        e_inside: 0,
+        e_outside: 0,
+        isVaporBarrier: true,
+      };
+      vInfo = {
+        materialId: resolvedVb.materialId,
+        name: resolvedVb.name,
+        shortName: resolvedVb.shortName,
+        thicknessMm: resolvedVb.thicknessMm,
+        R_p: resolvedVb.R_p,
+        mu: resolvedVb.mu,
+        lambda: resolvedVb.lambda,
+        s: resolvedVb.s,
+        density: resolvedVb.density,
+        placement: plOpt.id,
+        placementLabel: plOpt.label,
+        isNormativePlacement: plOpt.isNormative,
+        isAuto: isAutoVb,
+        isCustom: resolvedVb.isCustom,
+      };
+    }
+
+    let insIdx = firstWallInsIdx >= 0 ? firstWallInsIdx : wallLayersConfig.length;
+    if (plOpt.id === 'inner_surface') insIdx = 0;
+    else if (plOpt.id === 'after_layer_1') insIdx = Math.min(1, wallLayersConfig.length);
+    else if (plOpt.id === 'after_layer_2') insIdx = Math.min(2, wallLayersConfig.length);
+    else if (plOpt.id === 'after_layer_3') insIdx = Math.min(3, wallLayersConfig.length);
+    else if (plOpt.id === 'after_layer_4') insIdx = Math.min(4, wallLayersConfig.length);
+
+    const vLayers: CalculatedLayer[] = [];
+    const vMeta: { R_exact: number; s: number; D_exact: number; Rp_exact: number }[] = [];
+
+    const pushVb = () => {
+      if (!vLayer) return;
+      const dExact = vRExact * vLayer.s;
+      vLayers.push({ ...vLayer });
+      vMeta.push({ R_exact: vRExact, s: vLayer.s, D_exact: dExact, Rp_exact: vRpExact });
+    };
+
+    wallLayersConfig.forEach((l, idx) => {
+      if (vLayer && idx === insIdx) pushVb();
+      const isIns = l.isInsulation || l.materialId === 'insulation';
+      const d =
+        isIns
+          ? ov.wallCustomLayers &&
+            ov.wallCustomLayers.length > 0 &&
+            ov.wallInsulationThickness === undefined &&
+            l.thickness > 0
+            ? l.thickness
+            : delta_wall_ins_adopted
+          : l.thickness;
+      const baseMat = getMaterialData(l.materialId, isIns);
+      const lambda = l.customLambda ?? baseMat.lambda;
+      const s = l.customS ?? baseMat.s;
+      const mu = l.customMu ?? baseMat.mu;
+      const rEx = d / lambda;
+      const dEx = rEx * s;
+      const rpEx = mu > 0 ? d / mu : 0;
+      vLayers.push({
+        name: l.name,
+        materialName: isIns ? insDef.name : baseMat.name,
+        density: baseMat.density,
+        thickness: d,
+        lambda,
+        R: +rEx.toFixed(4),
+        s,
+        D: +dEx.toFixed(3),
+        mu,
+        R_p: +rpEx.toFixed(4),
+        tempInside: 0,
+        tempOutside: 0,
+        E_inside: 0,
+        E_outside: 0,
+        e_inside: 0,
+        e_outside: 0,
+      });
+      vMeta.push({ R_exact: rEx, s, D_exact: dEx, Rp_exact: rpEx });
+    });
+    if (vLayer && insIdx >= wallLayersConfig.length) pushVb();
+
+    const rTotExact = R_without_ins + delta_wall_ins_adopted / insLambda + vRExact;
+    const rTot = +rTotExact.toFixed(2);
+    const rpTotExact = R_pv + vMeta.reduce((sum, m) => sum + m.Rp_exact, 0) + R_pn;
+    const rpTot = +rpTotExact.toFixed(2);
+
+    const qHeat = (t_v - t_n_moisture) / rTotExact;
+    const qWin = (t_v - t_n_design) / rTotExact;
+    const tauVHEx = t_v - qHeat * (1 / alpha_v_wall);
+
+    let curTEx = tauVHEx;
+    let curT = +curTEx.toFixed(2);
+    let curE = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * R_pv).toFixed(2);
+
+    const mPts: WallMoistureVariantData['moisturePoints'] = [
+      {
+        x: 0,
+        name: 'Внутренняя поверхность',
+        temp: curT,
+        E: getSaturatedVaporPressure(curTEx),
+        e: curE,
+      },
+    ];
+
+    let cX = 0;
+    let cR = 1 / alpha_v_wall;
+    let cRp = R_pv;
+
+    vLayers.forEach((l, idx) => {
+      const m = vMeta[idx];
+      l.tempInside = curT;
+      l.e_inside = curE;
+      l.E_inside = getSaturatedVaporPressure(curTEx);
+
+      const isIns = Boolean(
+        l.name.toLowerCase().includes('утепл') ||
+          l.materialName.toLowerCase().includes('утепл') ||
+          l.materialName.toLowerCase().includes('вата') ||
+          l.materialName.toLowerCase().includes('пенополистирол') ||
+          (l.lambda <= 0.08 && l.thickness >= 0.03)
+      );
+
+      if (isIns) {
+        const halfR = m.R_exact / 2;
+        const halfRp = m.Rp_exact / 2;
+        const midTEx = t_v - qHeat * (cR + halfR);
+        const midT = +midTEx.toFixed(2);
+        const midE = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * (cRp + halfRp)).toFixed(2);
+        mPts.push({
+          x: +(cX + l.thickness / 2).toFixed(3),
+          name: `Середина утеплителя (${Math.round((l.thickness * 1000) / 2)} мм)`,
+          temp: midT,
+          E: getSaturatedVaporPressure(midTEx),
+          e: midE,
+          isMidpoint: true,
+        });
+      }
+
+      cR += m.R_exact;
+      cRp += m.Rp_exact;
+      curTEx = t_v - qHeat * cR;
+      curT = +curTEx.toFixed(2);
+      curE = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * cRp).toFixed(2);
+
+      l.tempOutside = curT;
+      l.e_outside = curE;
+      l.E_outside = getSaturatedVaporPressure(curTEx);
+
+      cX += l.thickness;
+      mPts.push({
+        x: +cX.toFixed(3),
+        name: `Граница слоя: ${l.name}`,
+        temp: curT,
+        E: l.E_outside,
+        e: l.e_outside,
+      });
+    });
+
+    const cs: CrossSectionTemperaturePoint[] = [];
+    cs.push({
+      index: 0,
+      planeName: 'Внутренний воздух tв',
+      layerName: 'Воздушная среда помещения',
+      coord_x_mm: 0,
+      thickness_mm: 0,
+      R_layer: 0,
+      R_cumulative: 0,
+      temp_winter: t_v,
+      temp_heating: t_v,
+      E_sat: getSaturatedVaporPressure(t_v),
+      e_partial: e_v,
+      delta_margin: +(getSaturatedVaporPressure(t_v) - e_v).toFixed(1),
+    });
+
+    const rAlphaV = +(1 / alpha_v_wall).toFixed(4);
+    const tauVW = +(t_v - qWin * (1 / alpha_v_wall)).toFixed(2);
+    const tauVH = +tauVHEx.toFixed(2);
+    const eTauV = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * R_pv).toFixed(2);
+    const ETauV = getSaturatedVaporPressure(tauVHEx);
+    cs.push({
+      index: 1,
+      planeName: 'Внутренняя поверхность τв',
+      layerName: 'Пограничный слой теплоотдачи (1/αв)',
+      coord_x_mm: 0,
+      thickness_mm: 0,
+      R_layer: rAlphaV,
+      R_cumulative: rAlphaV,
+      temp_winter: tauVW,
+      temp_heating: tauVH,
+      E_sat: ETauV,
+      e_partial: eTauV,
+      delta_margin: +(ETauV - eTauV).toFixed(1),
+    });
+
+    let cwX = 0;
+    let cwR = 1 / alpha_v_wall;
+    let cwRp = R_pv;
+    let sIdx = 2;
+
+    vLayers.forEach((layer, idx) => {
+      const m = vMeta[idx];
+      const isLast = idx === vLayers.length - 1;
+      const isIns = Boolean(
+        layer.name.toLowerCase().includes('утепл') ||
+          layer.materialName.toLowerCase().includes('утепл') ||
+          layer.materialName.toLowerCase().includes('вата') ||
+          layer.materialName.toLowerCase().includes('пенополистирол') ||
+          (layer.lambda <= 0.08 && layer.thickness >= 0.03)
+      );
+
+      if (isIns) {
+        const halfX = (layer.thickness * 1000) / 2;
+        const halfR = m.R_exact / 2;
+        const halfRp = m.Rp_exact / 2;
+        const midX = cwX + halfX;
+        const midR = cwR + halfR;
+        const midRp = cwRp + halfRp;
+        const twMid = +(t_v - qWin * midR).toFixed(2);
+        const thMidEx = t_v - qHeat * midR;
+        const thMid = +thMidEx.toFixed(2);
+        const EhMid = getSaturatedVaporPressure(thMidEx);
+        const ehMid = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * midRp).toFixed(2);
+        cs.push({
+          index: sIdx++,
+          planeName: 'Середина утеплителя (середина слоя)',
+          layerName: `${layer.name} (контрольная точка x = ${Math.round(midX)} мм)`,
+          coord_x_mm: Math.round(midX),
+          thickness_mm: Math.round(halfX),
+          R_layer: +halfR.toFixed(3),
+          R_cumulative: +midR.toFixed(3),
+          temp_winter: twMid,
+          temp_heating: thMid,
+          E_sat: EhMid,
+          e_partial: ehMid,
+          delta_margin: +(EhMid - ehMid).toFixed(1),
+          isInsulationMidpoint: true,
+        });
+      }
+
+      cwX += layer.thickness * 1000;
+      cwR += m.R_exact;
+      cwRp += m.Rp_exact;
+
+      const tw = +(t_v - qWin * cwR).toFixed(2);
+      const thEx = t_v - qHeat * cwR;
+      const th = +thEx.toFixed(2);
+      const Eh = getSaturatedVaporPressure(thEx);
+      const eh = +(e_v_exact - ((e_v_exact - e_n_exact) / rpTotExact) * cwRp).toFixed(2);
+
+      const thkMmVal = layer.thickness * 1000;
+      const formattedThkMm = thkMmVal < 10 ? +thkMmVal.toFixed(2) : Math.round(thkMmVal);
+      const formattedCoordX =
+        Math.abs(cwX - Math.round(cwX)) < 0.001 ? Math.round(cwX) : +cwX.toFixed(2);
+
+      cs.push({
+        index: sIdx++,
+        planeName: isLast
+          ? `Наружная поверхность τн (${layer.name})`
+          : layer.isVaporBarrier
+          ? `Граница пароизоляции: ${layer.name}`
+          : `Граница слоя: ${layer.name}`,
+        layerName: layer.name,
+        coord_x_mm: formattedCoordX,
+        thickness_mm: formattedThkMm,
+        R_layer: layer.R,
+        R_cumulative: +cwR.toFixed(3),
+        temp_winter: tw,
+        temp_heating: th,
+        E_sat: Eh,
+        e_partial: eh,
+        delta_margin: +(Eh - eh).toFixed(1),
+        isVaporBarrier: Boolean(layer.isVaporBarrier),
+      });
+    });
+
+    cs.push({
+      index: sIdx++,
+      planeName: 'Наружный воздух tн',
+      layerName: 'Наружный пограничный слой (1/αн) и наружная среда',
+      coord_x_mm: Math.round(cwX),
+      thickness_mm: 0,
+      R_layer: +(1 / alpha_n_ext).toFixed(4),
+      R_cumulative: +rTotExact.toFixed(3),
+      temp_winter: t_n_design,
+      temp_heating: t_n_moisture,
+      E_sat: getSaturatedVaporPressure(t_n_moisture),
+      e_partial: e_n,
+      delta_margin: +(getSaturatedVaporPressure(t_n_moisture) - e_n).toFixed(1),
+    });
+
+    const condRisk = mPts.some((p) => p.e >= p.E);
+    return {
+      vaporBarrier: vInfo,
+      layers: vLayers,
+      R_total: rTot,
+      total_R_p: rpTot,
+      condensationRisk: condRisk,
+      moisturePoints: mPts,
+      crossSectionProfile: cs,
+    };
+  };
+
+  // Вариант 1 (без пароизоляции) и Вариант 2 (с пароизоляцией) для наружной стены
+  const unprotectedWallVariant = buildWallMoistureVariant(null, false);
+  const wallNeedsVaporBarrier = unprotectedWallVariant.condensationRisk;
+  let protectedWallVariant: WallMoistureVariantData | null = null;
+  if (wallVaporBarrierInfo) {
+    protectedWallVariant = {
+      vaporBarrier: wallVaporBarrierInfo,
+      layers: wallLayersCalculated,
+      R_total: R_wall_total,
+      total_R_p: total_R_p_wall,
+      condensationRisk: wallCondensation,
+      moisturePoints: wallMoisturePoints,
+      crossSectionProfile: wallCrossSection,
+    };
+  } else if (wallNeedsVaporBarrier) {
+    const autoWallCandidates = ['pe_film_1', 'pe_film_2', 'foil_membrane'];
+    for (const matId of autoWallCandidates) {
+      const candVar = buildWallMoistureVariant(
+        { materialId: matId, placement: 'before_insulation' },
+        true
+      );
+      protectedWallVariant = candVar;
+      if (!candVar.condensationRisk) break;
+    }
+  }
 
   const delta_t_norm_wall = ov.delta_t_norm_wall ?? bTypeDef.delta_t_norm_wall;
   const R_wall_norm_latest_req = +(bTypeDef.R_norm_wall * n_wall).toFixed(2);
@@ -1092,12 +1545,15 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     tau_v_min: tau_v_wall,
     dew_point: dew_point_internal,
     condensationRisk: wallCondensation,
+    needsVaporBarrier: wallNeedsVaporBarrier,
     isRCompliant: wallRCompliant,
     isCompliant: wallRCompliant && tau_v_wall > dew_point_internal && delta_t_wall <= delta_t_norm_wall,
     total_R_p: total_R_p_wall,
     vaporBarrier: wallVaporBarrierInfo,
     moisturePoints: wallMoisturePoints,
     crossSectionProfile: wallCrossSection,
+    unprotectedVariant: unprotectedWallVariant,
+    protectedVariant: protectedWallVariant,
   };
 
 
@@ -1199,6 +1655,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const calcLayer: CalculatedLayer = {
       name: l.name,
       materialName: baseMat.name,
+      density: baseMat.density,
       thickness: l.thickness,
       lambda,
       R: +rExact.toFixed(4),
@@ -1226,9 +1683,18 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
   const roofInsLambda = ov.roofInsulationConductivity ?? (expCond === 'А' ? insDef.lambda_A : insDef.lambda_B);
   const roofInsS = expCond === 'А' ? insDef.s_A : insDef.s_B;
   const delta_roof_ins_calc = (R_roof_req - R_roof_without_ins) * roofInsLambda;
-  const delta_roof_ins_adopted = ov.roofInsulationThickness !== undefined
-    ? ov.roofInsulationThickness
-    : +(Math.ceil(delta_roof_ins_calc * 100) / 100).toFixed(2);
+  const customRoofInsLayer =
+    ov.roofCustomLayers && ov.roofCustomLayers.length > 0
+      ? ov.roofCustomLayers.find(
+          (cl) => cl.isInsulation || cl.name.toLowerCase().includes('утепл')
+        )
+      : undefined;
+  const delta_roof_ins_adopted =
+    ov.roofInsulationThickness !== undefined
+      ? ov.roofInsulationThickness
+      : customRoofInsLayer && customRoofInsLayer.thickness > 0
+      ? customRoofInsLayer.thickness
+      : +(Math.ceil(delta_roof_ins_calc * 100) / 100).toFixed(2);
   const R_roof_total_exact = R_roof_without_ins + delta_roof_ins_adopted / roofInsLambda;
   const R_roof_total = +R_roof_total_exact.toFixed(2);
 
@@ -1236,6 +1702,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
   const roofInsLayer: CalculatedLayer = {
     name: 'Утеплитель ' + insDef.id,
     materialName: insDef.name,
+    density: insDef.density,
     thickness: delta_roof_ins_adopted,
     lambda: roofInsLambda,
     R: +(delta_roof_ins_adopted / roofInsLambda).toFixed(4),
@@ -1251,47 +1718,111 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     e_outside: 0,
   };
 
-  // Построитель слоя пароизоляции из справочника Приложения Н (с учетом материала и толщины в мм)
-  const makeVaporBarrierFromCatalog = (
-    materialId: string,
-    thicknessMm?: number,
+  // Построитель слоя пароизоляции покрытия (поддерживает каталог Прил. Н, свою пароизоляцию и выбор расположения)
+  const roofPlacementOpt = getRoofPlacementOption(ov.roofVaporBarrier?.placement);
+  const makeRoofVaporBarrier = (
+    cfg: VaporBarrierConfig,
     isAuto = false
   ): { layer: CalculatedLayer; info: AppliedVaporBarrierInfo } | null => {
-    const mat = getVaporBarrierById(materialId);
-    if (mat.id === 'none') return null;
-    const thkMm = thicknessMm !== undefined && thicknessMm > 0 ? thicknessMm : mat.defaultThicknessMm;
-    const rpVal = calculateVaporBarrierRp(mat.id, thkMm);
-    if (rpVal <= 0 || thkMm <= 0) return null;
-    const thkM = thkMm / 1000;
-    const rVb = +(thkM / mat.lambda).toFixed(4);
-    const dVb = +(rVb * mat.s).toFixed(3);
+    const resolved = resolveVaporBarrier(cfg);
+    if (!resolved) return null;
+    const thkM = resolved.thicknessMm / 1000;
+    const rVb = +(thkM / resolved.lambda).toFixed(4);
+    const dVb = +(rVb * resolved.s).toFixed(3);
+    const plOpt = getRoofPlacementOption(cfg.placement ?? roofPlacementOpt.id);
     return {
       layer: {
-        name: `Пароизоляция (${mat.shortName}, δ=${thkMm} мм, Rп=${rpVal})`,
-        materialName: mat.name,
+        name: `Пароизоляция (${resolved.shortName}, δ=${resolved.thicknessMm} мм, Rп=${resolved.R_p})`,
+        materialName: resolved.name,
+        density: resolved.density,
         thickness: thkM,
-        lambda: mat.lambda,
+        lambda: resolved.lambda,
         R: rVb,
-        s: mat.s,
+        s: resolved.s,
         D: dVb,
-        mu: +(thkM / rpVal).toFixed(7),
-        R_p: rpVal,
+        mu: resolved.mu,
+        R_p: resolved.R_p,
         tempInside: 0,
         tempOutside: 0,
         E_inside: 0,
         E_outside: 0,
         e_inside: 0,
         e_outside: 0,
+        isVaporBarrier: true,
       },
       info: {
-        materialId: mat.id,
-        name: mat.name,
-        shortName: mat.shortName,
-        thicknessMm: thkMm,
-        R_p: rpVal,
+        materialId: resolved.materialId,
+        name: resolved.name,
+        shortName: resolved.shortName,
+        thicknessMm: resolved.thicknessMm,
+        R_p: resolved.R_p,
+        mu: resolved.mu,
+        lambda: resolved.lambda,
+        s: resolved.s,
+        density: resolved.density,
+        placement: plOpt.id,
+        placementLabel: plOpt.label,
+        isNormativePlacement: plOpt.isNormative,
         isAuto,
+        isCustom: resolved.isCustom,
       },
     };
+  };
+
+  // Сборка слоев покрытия с учетом выбранного положения пароизоляции (по нормам СП 2.04.01: 'before_insulation')
+  const assembleRoofLayers = (
+    slabLayers: CalculatedLayer[],
+    vbLayer: CalculatedLayer | null,
+    placement: RoofVaporBarrierPlacement
+  ): CalculatedLayer[] => {
+    if (!vbLayer) {
+      return [
+        ...layersBeforeSlab,
+        ...slabLayers,
+        ...layersBetweenSlabAndIns,
+        roofInsLayer,
+        ...layersAfterIns,
+      ];
+    }
+    if (placement === 'inner_surface') {
+      return [
+        vbLayer,
+        ...layersBeforeSlab,
+        ...slabLayers,
+        ...layersBetweenSlabAndIns,
+        roofInsLayer,
+        ...layersAfterIns,
+      ];
+    }
+    if (placement === 'after_plaster') {
+      return [
+        ...layersBeforeSlab,
+        vbLayer,
+        ...slabLayers,
+        ...layersBetweenSlabAndIns,
+        roofInsLayer,
+        ...layersAfterIns,
+      ];
+    }
+    if (placement === 'after_insulation') {
+      return [
+        ...layersBeforeSlab,
+        ...slabLayers,
+        ...layersBetweenSlabAndIns,
+        roofInsLayer,
+        vbLayer,
+        ...layersAfterIns,
+      ];
+    }
+    // 'before_insulation' (нормативное расположение по СП 2.04.01-2020 п. 10.6)
+    return [
+      ...layersBeforeSlab,
+      ...slabLayers,
+      ...layersBetweenSlabAndIns,
+      vbLayer,
+      roofInsLayer,
+      ...layersAfterIns,
+    ];
   };
 
   // Слои плиты для двух расчетных сечений:
@@ -1300,6 +1831,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     {
       name: `Железобетонное ребро плиты h=${slabH}мм (сплошной бетон)`,
       materialName: 'Железобетон сплошной ГОСТ 26633-2015',
+      density: 2500,
       thickness: h_m,
       lambda: concreteLambda,
       R: +(h_m / concreteLambda).toFixed(4),
@@ -1322,6 +1854,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     {
       name: `Нижняя полка ж/б плиты δ=${Math.round(delta_flange_actual * 1000)}мм`,
       materialName: 'Железобетон',
+      density: 2500,
       thickness: +delta_flange_actual.toFixed(4),
       lambda: concreteLambda,
       R: flangeR,
@@ -1339,6 +1872,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     {
       name: `Воздушная прослойка (пустота плиты d=${slabVoidD}мм)`,
       materialName: 'Замкнутая воздушная прослойка',
+      density: 0,
       thickness: d_m,
       lambda: +(d_m / R_zvp).toFixed(3),
       R: R_zvp,
@@ -1356,6 +1890,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     {
       name: `Верхняя полка ж/б плиты δ=${Math.round(delta_flange_actual * 1000)}мм`,
       materialName: 'Железобетон',
+      density: 2500,
       thickness: +delta_flange_actual.toFixed(4),
       lambda: concreteLambda,
       R: flangeR,
@@ -1406,16 +1941,10 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     slabLayers: CalculatedLayer[],
     vbLayer: CalculatedLayer | null,
     t_n_sec: number,
-    d_sec: number
+    d_sec: number,
+    vbPlacement: RoofVaporBarrierPlacement = 'before_insulation'
   ): RoofSectionProfileData & { total_Rp: number } => {
-    const fullLayers = [
-      ...layersBeforeSlab,
-      ...slabLayers,
-      ...layersBetweenSlabAndIns,
-      ...(vbLayer ? [vbLayer] : []),
-      roofInsLayer,
-      ...layersAfterIns,
-    ];
+    const fullLayers = assembleRoofLayers(slabLayers, vbLayer, vbPlacement);
     const R_alpha_v_exact = 1 / alpha_v_roof;
     const R_alpha_n_exact = 1 / alpha_n_ext;
     const R_alpha_v = +R_alpha_v_exact.toFixed(4);
@@ -1427,7 +1956,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const layerExactRp = (l: CalculatedLayer) => {
       const lower = l.name.toLowerCase();
       if (lower.includes('воздушная прослойка')) return 0; // СП 2.04.01-2020 п. 10.5: R_п.возд = 0
-      if (lower.includes('пароизоляция')) return l.R_p;
+      if (l.isVaporBarrier || lower.includes('пароизоляция')) return l.R_p;
       return l.mu > 0 ? l.thickness / l.mu : 0;
     };
 
@@ -1585,12 +2114,23 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       const E_h = getSaturatedVaporPressure(t_h_exact);
       const e_h = +(e_v_exact - ((e_v_exact - e_n_exact) / total_Rp_sec_exact) * cumRp).toFixed(2);
 
+      const thkMmVal = layer.thickness * 1000;
+      const formattedThkMm = thkMmVal < 10 ? +thkMmVal.toFixed(2) : Math.round(thkMmVal);
+      const formattedCoordX =
+        Math.abs(cumX_mm - Math.round(cumX_mm)) < 0.001
+          ? Math.round(cumX_mm)
+          : +cumX_mm.toFixed(2);
+
       crossSection.push({
         index: ptIndex++,
-        planeName: isLastLayer ? `Наружная поверхность покрытия τн (${layer.name})` : `Граница: ${layer.name}`,
+        planeName: isLastLayer
+          ? `Наружная поверхность покрытия τн (${layer.name})`
+          : layer.isVaporBarrier
+          ? `Граница пароизоляции: ${layer.name}`
+          : `Граница: ${layer.name}`,
         layerName: layer.name,
-        coord_x_mm: Math.round(cumX_mm),
-        thickness_mm: Math.round(layer.thickness * 1000),
+        coord_x_mm: formattedCoordX,
+        thickness_mm: formattedThkMm,
         R_layer: layer.R,
         R_cumulative: +cumR.toFixed(3),
         temp_winter: t_w,
@@ -1598,6 +2138,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         E_sat: E_h,
         e_partial: e_h,
         delta_margin: +(E_h - e_h).toFixed(1),
+        isVaporBarrier: Boolean(layer.isVaporBarrier),
       });
 
       moisturePoints.push({
@@ -1680,14 +2221,11 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
   let voidSectionData = voidCheckNoVB;
 
   if (ov.roofVaporBarrier !== undefined) {
-    const manualVb = makeVaporBarrierFromCatalog(
-      ov.roofVaporBarrier.materialId,
-      ov.roofVaporBarrier.thicknessMm,
-      false
-    );
+    const manualVb = makeRoofVaporBarrier(ov.roofVaporBarrier, false);
     if (manualVb) {
       chosenVbLayer = manualVb.layer;
       roofVaporBarrierInfo = manualVb.info;
+      const chosenPlacement = roofPlacementOpt.id;
       worstSectionData = buildRoofSectionData(
         'worst',
         'Худшее сечение (по ребру плиты)',
@@ -1696,7 +2234,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         ribLayers,
         manualVb.layer,
         t_n_roof,
-        D_roof_rib
+        D_roof_rib,
+        chosenPlacement
       );
       voidSectionData = buildRoofSectionData(
         'void',
@@ -1706,14 +2245,15 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         voidLayers,
         manualVb.layer,
         t_n_roof,
-        D_roof_void
+        D_roof_void,
+        chosenPlacement
       );
     }
   } else if (needsVaporBarrier) {
-    // Автоподбор по возрастанию Rп из Приложения Н: 1 слой ПЭ -> 2 слоя ПЭ -> фольгированная мембрана
+    // Автоподбор по возрастанию Rп из Приложения Н (по нормам СП 2.04.01: перед утеплителем)
     const autoCandidates = ['pe_film_1', 'pe_film_2', 'foil_membrane'];
     for (const matId of autoCandidates) {
-      const cand = makeVaporBarrierFromCatalog(matId, undefined, true);
+      const cand = makeRoofVaporBarrier({ materialId: matId, placement: 'before_insulation' }, true);
       if (!cand) continue;
       const wCand = buildRoofSectionData(
         'worst',
@@ -1723,7 +2263,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         ribLayers,
         cand.layer,
         t_n_roof,
-        D_roof_rib
+        D_roof_rib,
+        'before_insulation'
       );
       const vCand = buildRoofSectionData(
         'void',
@@ -1733,7 +2274,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         voidLayers,
         cand.layer,
         t_n_roof,
-        D_roof_void
+        D_roof_void,
+        'before_insulation'
       );
       chosenVbLayer = cand.layer;
       roofVaporBarrierInfo = cand.info;
@@ -1747,36 +2289,77 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
 
   const vaporBarrierAdded = Boolean(chosenVbLayer);
   const activeSection = activeSectionType === 'void' ? voidSectionData : worstSectionData;
+  const activeRoofVbPlacement: RoofVaporBarrierPlacement =
+    (roofVaporBarrierInfo?.placement as RoofVaporBarrierPlacement) || 'before_insulation';
 
-  // Расчет слоев для сводной таблицы покрытия (без дублирования плиты!)
-  const roofLayersCalculated: CalculatedLayer[] = [
-    ...layersBeforeSlab,
-    {
-      name: `Многопустотная ж/б плита h=${slabH}мм`,
-      materialName: 'Железобетон с пустотами d=' + slabVoidD + 'мм',
-      thickness: h_m,
-      lambda: +(h_m / R_slab).toFixed(3),
-      R: R_slab,
-      s: concreteS,
-      D: +(R_slab * concreteS).toFixed(2),
-      mu: 0.03,
-      R_p: +(h_m / 0.03).toFixed(2),
-      tempInside: 0,
-      tempOutside: 0,
-      E_inside: 0,
-      E_outside: 0,
-      e_inside: 0,
-      e_outside: 0,
-    },
-    ...layersBetweenSlabAndIns,
-    ...(chosenVbLayer ? [chosenVbLayer] : []),
-    roofInsLayer,
-    ...layersAfterIns,
-  ];
+  // Расчет слоев для сводной таблицы покрытия (без дублирования плиты, с учетом расположения пароизоляции!)
+  const hollowSlabSummaryLayer: CalculatedLayer = {
+    name: `Многопустотная ж/б плита h=${slabH}мм`,
+    materialName: 'Железобетон с пустотами d=' + slabVoidD + 'мм',
+    density: 2500,
+    thickness: h_m,
+    lambda: +(h_m / R_slab).toFixed(3),
+    R: R_slab,
+    s: concreteS,
+    D: +(R_slab * concreteS).toFixed(2),
+    mu: 0.03,
+    R_p: +(h_m / 0.03).toFixed(2),
+    tempInside: 0,
+    tempOutside: 0,
+    E_inside: 0,
+    E_outside: 0,
+    e_inside: 0,
+    e_outside: 0,
+  };
+  const roofLayersCalculated: CalculatedLayer[] = assembleRoofLayers(
+    [hollowSlabSummaryLayer],
+    chosenVbLayer,
+    activeRoofVbPlacement
+  );
 
   const delta_t_norm_roof = ov.delta_t_norm_roof ?? bTypeDef.delta_t_norm_roof;
   const R_roof_norm_latest_req = +(bTypeDef.R_norm_roof * n_roof).toFixed(2);
   const roofRCompliant = R_roof_total >= R_roof_req && R_roof_total >= R_roof_norm_latest_req;
+
+  // Гарантируем наличие защищенного варианта (с пароизоляцией) для отчета, даже если пароизоляция была отключена вручную
+  let protectedWorstSection = worstSectionData;
+  let protectedVoidSection = voidSectionData;
+  let protectedRoofVaporBarrier = roofVaporBarrierInfo;
+  if (!protectedRoofVaporBarrier && needsVaporBarrier) {
+    const autoCandidates = ['pe_film_1', 'pe_film_2', 'foil_membrane'];
+    for (const matId of autoCandidates) {
+      const cand = makeRoofVaporBarrier({ materialId: matId, placement: 'before_insulation' }, true);
+      if (!cand) continue;
+      const wCand = buildRoofSectionData(
+        'worst',
+        'Худшее сечение (по ребру плиты)',
+        `Сечение II через сплошное бетонное ребро h=${slabH}мм с пароизоляцией (${cand.info.shortName}, Rпл = ${R_rib_worst} м²·°С/Вт)`,
+        R_rib_worst,
+        ribLayers,
+        cand.layer,
+        t_n_roof,
+        D_roof_rib,
+        'before_insulation'
+      );
+      const vCand = buildRoofSectionData(
+        'void',
+        'Сечение по пустоте плиты',
+        `Сечение I через круглую пустоту плиты с пароизоляцией (${cand.info.shortName}, Rпл = ${R_void_section} м²·°С/Вт)`,
+        R_void_section,
+        voidLayers,
+        cand.layer,
+        t_n_roof,
+        D_roof_void,
+        'before_insulation'
+      );
+      protectedRoofVaporBarrier = cand.info;
+      protectedWorstSection = wCand;
+      protectedVoidSection = vCand;
+      if (!wCand.condensationRisk && !vCand.condensationRisk) {
+        break;
+      }
+    }
+  }
 
   const roofResult: RoofCalculationResult = {
     construction: roofDef,
@@ -1827,6 +2410,11 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     moistureCondensationRisk: activeSection.condensationRisk,
     worstSection: worstSectionData,
     voidSection: voidSectionData,
+    unprotectedWorstSection: worstCheckNoVB,
+    unprotectedVoidSection: voidCheckNoVB,
+    protectedWorstSection,
+    protectedVoidSection,
+    protectedVaporBarrier: protectedRoofVaporBarrier,
     activeSectionType,
     moisturePoints: activeSection.moisturePoints,
     crossSectionProfile: activeSection.crossSectionProfile,
@@ -1855,27 +2443,42 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         customMu: undefined as number | undefined,
       }));
 
-  // Расчет теплопотерь трубопроводов
-  const getPipeQPerMeter = (temp: number, dy: number): number => {
-    const tempDiff = temp - 8.7;
-    const factor = dy / 50;
-    return +(0.28 * factor * tempDiff + 3.5).toFixed(1);
-  };
+  // Расчет теплопотерь трубопроводов по Приложению О пособия А. С. Шибеко (2018, стр. 108, табл. 8.2–8.3 стр. 78–79)
+  const overrideP = ov.crawlSpacePipes;
+  const sourcePipes =
+    overrideP?.customPipes && overrideP.customPipes.length > 0
+      ? overrideP.customPipes.map((cp) => ({
+          temp: Number(cp.temp) || 70,
+          dy: Number(cp.dy) || 25,
+          length: Math.max(0, Number(cp.length) || 0),
+        }))
+      : baseDef.pipes.map((p, idx) => ({
+          temp:
+            (idx === 0 && overrideP?.pipe1_temp) ||
+            (idx === 1 && overrideP?.pipe2_temp) ||
+            (idx === 2 && overrideP?.pipe3_temp) ||
+            p.temp,
+          dy:
+            (idx === 0 && overrideP?.pipe1_dy) ||
+            (idx === 1 && overrideP?.pipe2_dy) ||
+            (idx === 2 && overrideP?.pipe3_dy) ||
+            p.dy,
+          length:
+            (idx === 0 && overrideP?.pipe1_length !== undefined ? overrideP.pipe1_length : undefined) ??
+            (idx === 1 && overrideP?.pipe2_length !== undefined ? overrideP.pipe2_length : undefined) ??
+            (idx === 2 && overrideP?.pipe3_length !== undefined ? overrideP.pipe3_length : undefined) ??
+            p.length,
+        }));
 
   let totalPipeHeatWatts = 0;
-  const pipesDetails = baseDef.pipes.map((p, idx) => {
-    const overrideP = ov.crawlSpacePipes;
-    const temp = (idx === 0 && overrideP?.pipe1_temp) || (idx === 1 && overrideP?.pipe2_temp) || (idx === 2 && overrideP?.pipe3_temp) || p.temp;
-    const dy = (idx === 0 && overrideP?.pipe1_dy) || (idx === 1 && overrideP?.pipe2_dy) || (idx === 2 && overrideP?.pipe3_dy) || p.dy;
-    const length = (idx === 0 && overrideP?.pipe1_length) || (idx === 1 && overrideP?.pipe2_length) || (idx === 2 && overrideP?.pipe3_length) || p.length;
-
-    const q_m = getPipeQPerMeter(temp, dy);
-    const q_tot = +(q_m * length).toFixed(1);
+  const pipesDetails = sourcePipes.map((p) => {
+    const q_m = getPipeLinearHeatLoss(p.temp, p.dy);
+    const q_tot = +(q_m * p.length).toFixed(1);
     totalPipeHeatWatts += q_tot;
     return {
-      temp,
-      dy,
-      length,
+      temp: p.temp,
+      dy: p.dy,
+      length: p.length,
       q_heat_loss: q_m,
       q_total: q_tot,
     };
@@ -1896,9 +2499,18 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
   const R_ptp_min = ov.R_norm_basement ?? bTypeDef.R_norm_basement;
   const baseInsLambda = ov.basementInsulationConductivity ?? (expCond === 'А' ? insDef.lambda_A : insDef.lambda_B);
   const delta_base_ins_calc = (R_ptp_min - R_ptp_without_ins) * baseInsLambda;
-  const delta_base_ins_adopted = ov.basementInsulationThickness !== undefined
-    ? ov.basementInsulationThickness
-    : +(Math.max(0.05, Math.ceil(delta_base_ins_calc * 100) / 100)).toFixed(2);
+  const customBaseInsLayer =
+    ov.basementCustomLayers && ov.basementCustomLayers.length > 0
+      ? ov.basementCustomLayers.find(
+          (cl) => cl.isInsulation || cl.name.toLowerCase().includes('утепл')
+        )
+      : undefined;
+  const delta_base_ins_adopted =
+    ov.basementInsulationThickness !== undefined
+      ? ov.basementInsulationThickness
+      : customBaseInsLayer && customBaseInsLayer.thickness > 0
+      ? customBaseInsLayer.thickness
+      : +(Math.max(0.05, Math.ceil(delta_base_ins_calc * 100) / 100)).toFixed(2);
   const R_ptp_total = +(R_ptp_without_ins + delta_base_ins_adopted / baseInsLambda).toFixed(2);
 
   // Тепловой баланс подполья
@@ -2175,7 +2787,9 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     heightMm: number,
     formulaText: string
   ) => {
-    const area_m2 = +((Math.max(0, widthMm) * Math.max(0, heightMm)) / 1e6).toFixed(4);
+    // В табл. 6.2 Шибеко (стр. 47–48) площади участков приводятся с точностью до 5 знаков (например, 0,04725 м²),
+    // чтобы сумма всех участков строго равнялась Fок = H * B / 10^6 без погрешности округления.
+    const area_m2 = +((Math.max(0, widthMm) * Math.max(0, heightMm)) / 1e6).toFixed(5);
     const R_zone = kind === 'glazing' ? R_win_trans : R_win_opaque;
     const F_over_R = +(area_m2 / R_zone).toFixed(4);
     zones.push({
@@ -2230,25 +2844,28 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     pushZone('II', 'Остекление створки (Fсв II)', 'glazing', b3, h_glaz_R, `b₃ × (H − 2b₁ − 2b₂) = ${b3} × ${h_glaz_R}`);
   }
 
-  const F_win_total = +((H * B) / 1e6).toFixed(4);
+  const F_win_total = +((H * B) / 1e6).toFixed(5);
   const F_win_trans = +zones
     .filter((z) => z.kind === 'glazing')
     .reduce((sum, z) => sum + z.area_m2, 0)
-    .toFixed(4);
-  const F_win_opaque = +(F_win_total - F_win_trans).toFixed(4);
-  const sum_F_over_R = +(F_win_trans / R_win_trans + F_win_opaque / R_win_opaque).toFixed(4);
+    .toFixed(5);
+  const F_win_opaque = +(F_win_total - F_win_trans).toFixed(5);
+  const F_over_R_opaque = +(F_win_opaque / R_win_opaque).toFixed(4);
+  const F_over_R_trans = +(F_win_trans / R_win_trans).toFixed(4);
+  const sum_F_over_R = +(F_over_R_opaque + F_over_R_trans).toFixed(4);
 
-  // Приведенное сопротивление теплопередаче окна:
-  // Rт.ок = ΣF_i / Σ(F_i / R_i) = Fок / (Fсв / Rсв + Fнепр / Rнепр)
+  // Приведенное сопротивление теплопередаче окна (ф. 2.5 Шибеко, табл. 6.2 стр. 48):
+  // Rт.ок = ΣF_i / Σ(F_i / R_i) = Fок / (Fнепр / Rнепр + Fсв / Rсв)
   const R_win_actual = +(F_win_total / (F_win_trans / R_win_trans + F_win_opaque / R_win_opaque)).toFixed(2);
 
-  // Поэтажный расчет воздухопроницаемости окон (Шибеко 2018, п. 6.2, рис. 6.4, табл. 6.3 и 6.4)
+  // Поэтажный расчет воздухопроницаемости окон (Шибеко 2018, п. 6.2, рис. 6.4, табл. 6.3 и 6.4, стр. 48–50)
   // Расчетная высота здания: H = 1,0 (цоколь) + 3,0·N (этажи) + 2,7 (вытяжная шахта) = 3,7 + 3,0·N
   const terrainType: WindTerrainType = ov.windowTerrainType || 'B';
   const H_building = +(3.7 + 3.0 * cipher.floorsCount).toFixed(1);
-  const rho_n = +(353 / (273 + climate.t_coldest_5days_092)).toFixed(3); // плотность наружного воздуха при t_х.5(0.92), кг/м³
-  const rho_v = +(353 / (273 + t_v)).toFixed(3); // плотность внутреннего воздуха, кг/м³
-  const delta_rho = +(rho_n - rho_v).toFixed(3);
+  // Плотности воздуха по Шибеко (стр. 49) округляются до 2 знаков после запятой (например, 1,42 и 1,21 кг/м³)
+  const rho_n = +(353 / (273 + climate.t_coldest_5days_092)).toFixed(2); // плотность наружного воздуха при t_х.5(0.92), кг/м³
+  const rho_v = +(353 / (273 + t_v)).toFixed(2); // плотность внутреннего воздуха, кг/м³
+  const delta_rho = +(rho_n - rho_v).toFixed(2);
   const G_norm_window = 10.0; // кг/(м²·ч) для окон в ПВХ/алюминиевых переплетах (Шибеко стр. 49)
 
   const floorsPermeability: FloorWindowPermeability[] = [];
@@ -2257,14 +2874,16 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const h_floor = +(2.5 + 3.0 * (fl - 1)).toFixed(1);
     const k_i = getWindPressureHeightCoeff(h_floor, terrainType);
 
-    // Разность давлений Δp_i (ф. 6.2 Шибеко, стр. 49):
-    // Δp = (H − h_i)·9.81·(ρ_н − ρ_в) + 0.5·ρ_н·v_ср²·(c_н − c_п)·k_i
-    const delta_p_grav = +((H_building - h_floor) * 9.81 * delta_rho).toFixed(1);
-    const delta_p_wind = +(0.5 * rho_n * climate.wind_speed_winter ** 2 * DELTA_C_AERODYNAMIC * k_i).toFixed(1);
-    const delta_p = +(delta_p_grav + delta_p_wind).toFixed(1);
+    // Разность давлений Δp_i (ф. 6.2 Шибеко, стр. 48–50, табл. 6.3):
+    // Δp_i = (H − h_i)·9.81·(ρ_н − ρ_в) + 0.5·ρ_н·v_ср²·(c_н − c_п)·k_i
+    const delta_p_grav_exact = (H_building - h_floor) * 9.81 * delta_rho;
+    const delta_p_wind_exact = 0.5 * rho_n * climate.wind_speed_winter ** 2 * DELTA_C_AERODYNAMIC * k_i;
+    const delta_p_grav = +delta_p_grav_exact.toFixed(2);
+    const delta_p_wind = +delta_p_wind_exact.toFixed(2);
+    const delta_p = +(delta_p_grav_exact + delta_p_wind_exact).toFixed(2);
 
-    // Требуемое сопротивление воздухопроницанию (ф. 6.1 Шибеко):
-    // R_в.тр = (1 / G_норм) · (Δp / 10)^(2/3), м²·ч/кг
+    // Требуемое сопротивление воздухопроницанию (ф. 6.1 Шибеко, табл. 6.3 стр. 50):
+    // R_в.тр = (1 / G_норм) · (Δp_i / 10)^(2/3), м²·ч/кг
     const R_v_req = +((1 / G_norm_window) * Math.pow(Math.max(1, delta_p) / 10, 2 / 3)).toFixed(3);
     const R_v_max = +(1.2 * R_v_req).toFixed(3);
     const classRange = getWindowClassRangeByRv(R_v_req, R_v_max);
@@ -2295,6 +2914,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     area_opaque: F_win_opaque,
     R_opaque: R_win_opaque,
     R_transparent: R_win_trans,
+    F_over_R_opaque,
+    F_over_R_transparent: F_over_R_trans,
     sum_F_over_R,
     R_actual: R_win_actual,
     R_norm: R_norm_window,

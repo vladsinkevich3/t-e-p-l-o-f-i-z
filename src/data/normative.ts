@@ -388,3 +388,88 @@ export function getWindowClassRangeByRv(
     classText: parts.join('; '),
   };
 }
+
+/**
+ * Приложение О (А. С. Шибеко 2018, стр. 108):
+ * Нормы линейной плотности теплового потока q_i, Вт/м, через изолированную поверхность трубопроводов
+ * при подземной прокладке в непроходных каналах и в техническом подполье
+ * (для расчетной температуры окружающей среды t_окр = +5 °C).
+ */
+export const APPENDIX_O_DIAMETERS_MM = [10, 15, 20, 25, 32, 40, 50, 65, 80, 100, 125, 150] as const;
+
+export const APPENDIX_O_PIPE_Q5_TABLE: Record<number, Record<number, number>> = {
+  10: { 50: 11, 60: 12, 70: 14, 80: 15, 90: 17, 95: 17.5, 100: 18, 105: 19 },
+  15: { 50: 12, 60: 14, 70: 16, 80: 17, 90: 19, 95: 20, 100: 21, 105: 22 },
+  20: { 50: 14, 60: 16, 70: 18, 80: 20, 90: 21, 95: 22, 100: 23, 105: 24.5 },
+  25: { 50: 16, 60: 18, 70: 20, 80: 22, 90: 24, 95: 25, 100: 26, 105: 27.5 },
+  32: { 50: 17, 60: 20, 70: 22, 80: 24, 90: 27, 95: 28, 100: 29, 105: 30.5 },
+  40: { 50: 19, 60: 22, 70: 24, 80: 26, 90: 29, 95: 30.5, 100: 32, 105: 33.5 },
+  50: { 50: 21, 60: 24, 70: 27, 80: 30, 90: 32, 95: 33.5, 100: 35, 105: 37 },
+  65: { 50: 24, 60: 27, 70: 31, 80: 34, 90: 37, 95: 38.5, 100: 40, 105: 42 },
+  70: { 50: 25, 60: 28, 70: 32, 80: 35, 90: 38.5, 95: 40, 100: 41.5, 105: 43.5 },
+  80: { 50: 27, 60: 30, 70: 34, 80: 38, 90: 42, 95: 44, 100: 46, 105: 48 },
+  100: { 50: 30, 60: 34, 70: 39, 80: 43, 90: 47, 95: 49.5, 100: 52, 105: 54.5 },
+  125: { 50: 35, 60: 40, 70: 45, 80: 50, 90: 55, 95: 57.5, 100: 60, 105: 63 },
+  150: { 50: 40, 60: 46, 70: 51, 80: 57, 90: 63, 95: 66, 100: 69, 105: 72 },
+};
+
+/**
+ * Определение линейной плотности теплового потока трубопровода q_i^5 (Вт/м)
+ * по Приложению О пособия А. С. Шибеко (2018, стр. 108, табл. 8.2–8.3 стр. 78–79).
+ */
+export function getPipeLinearHeatLoss(tempC: number, dyMm: number): number {
+  const row = APPENDIX_O_PIPE_Q5_TABLE[dyMm];
+  if (row && row[tempC] !== undefined) {
+    return row[tempC];
+  }
+
+  // Находим ближайший или интерполируемый диаметр
+  const allDys = Object.keys(APPENDIX_O_PIPE_Q5_TABLE)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  const evalForDy = (d: number, t: number): number => {
+    const tMap = APPENDIX_O_PIPE_Q5_TABLE[d];
+    if (tMap[t] !== undefined) return tMap[t];
+    const temps = Object.keys(tMap)
+      .map(Number)
+      .sort((a, b) => a - b);
+    if (t <= temps[0]) {
+      const t0 = temps[0];
+      const t1 = temps[1];
+      return +(tMap[t0] + ((t - t0) / (t1 - t0)) * (tMap[t1] - tMap[t0])).toFixed(1);
+    }
+    const lastIdx = temps.length - 1;
+    if (t >= temps[lastIdx]) {
+      const t0 = temps[lastIdx - 1];
+      const t1 = temps[lastIdx];
+      return +(tMap[t1] + ((t - t1) / (t1 - t0)) * (tMap[t1] - tMap[t0])).toFixed(1);
+    }
+    for (let i = 0; i < temps.length - 1; i++) {
+      const t0 = temps[i];
+      const t1 = temps[i + 1];
+      if (t >= t0 && t <= t1) {
+        return +(tMap[t0] + ((t - t0) / (t1 - t0)) * (tMap[t1] - tMap[t0])).toFixed(1);
+      }
+    }
+    return tMap[temps[0]];
+  };
+
+  if (APPENDIX_O_PIPE_Q5_TABLE[dyMm]) {
+    return evalForDy(dyMm, tempC);
+  }
+  if (dyMm <= allDys[0]) return evalForDy(allDys[0], tempC);
+  if (dyMm >= allDys[allDys.length - 1]) return evalForDy(allDys[allDys.length - 1], tempC);
+
+  for (let i = 0; i < allDys.length - 1; i++) {
+    const d0 = allDys[i];
+    const d1 = allDys[i + 1];
+    if (dyMm >= d0 && dyMm <= d1) {
+      const q0 = evalForDy(d0, tempC);
+      const q1 = evalForDy(d1, tempC);
+      return +(q0 + ((dyMm - d0) / (d1 - d0)) * (q1 - q0)).toFixed(1);
+    }
+  }
+  return evalForDy(50, tempC);
+}
+

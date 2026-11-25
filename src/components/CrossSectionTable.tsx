@@ -96,11 +96,14 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
             {points.map((pt, idx) => {
               const isSafe = pt.delta_margin > 0;
               const isMid = Boolean(pt.isInsulationMidpoint);
+              const isVb = Boolean(pt.isVaporBarrier);
               const isInnerAir = idx === 0;
               const isOuterAir = idx === points.length - 1;
 
               const rowClass = isMid
                 ? 'bg-amber-950/30 border-l-4 border-l-amber-400 text-amber-100 font-semibold'
+                : isVb
+                ? 'bg-cyan-950/40 border-l-4 border-l-cyan-400 text-cyan-100 font-semibold'
                 : isInnerAir
                 ? 'bg-sky-950/35 border-l-4 border-l-sky-400 text-sky-100'
                 : isOuterAir
@@ -118,6 +121,8 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
                         className={`font-medium ${
                           isMid
                             ? 'text-amber-200 font-bold'
+                            : isVb
+                            ? 'text-cyan-200 font-bold'
                             : isInnerAir
                             ? 'text-sky-200 font-semibold'
                             : isOuterAir
@@ -140,6 +145,11 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
                       {isMid && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                           ★ Середина утеплителя
+                        </span>
+                      )}
+                      {isVb && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-400/50">
+                          Пароизоляция
                         </span>
                       )}
                     </div>

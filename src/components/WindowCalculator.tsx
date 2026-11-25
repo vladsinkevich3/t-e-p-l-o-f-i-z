@@ -195,19 +195,35 @@ export const WindowCalculator: React.FC<WindowCalculatorProps> = ({
                   <td className="py-2 px-3 text-right text-slate-300">{z.widthMm}</td>
                   <td className="py-2 px-3 text-right text-slate-300">{z.heightMm}</td>
                   <td className="py-2 px-3 text-slate-400 text-[11px]">{z.formulaText}</td>
-                  <td className="py-2 px-3 text-right text-white font-semibold">{z.area_m2.toFixed(4)}</td>
+                  <td className="py-2 px-3 text-right text-white font-semibold">{Number(z.area_m2.toFixed(5))}</td>
                   <td className="py-2 px-3 text-right text-slate-300">{z.R_zone.toFixed(2)}</td>
                   <td className="py-2 px-3 text-right text-emerald-400">{z.F_over_R.toFixed(4)}</td>
                 </tr>
               ))}
             </tbody>
-            <tfoot className="border-t-2 border-slate-700 bg-slate-950 font-mono font-bold text-white">
-              <tr>
-                <td colSpan={6} className="py-2.5 px-3 font-sans text-right text-slate-300">
-                  Итого по оконному блоку (Fок / Σ(Fᵢ/Rᵢ) → Rт.ок = {win.R_actual} м²·°С/Вт):
+            <tfoot className="border-t-2 border-slate-700 bg-slate-950 font-mono text-white">
+              <tr className="border-b border-slate-800/80 text-slate-300">
+                <td colSpan={6} className="py-2 px-3 font-sans text-right">
+                  Итого по непрозрачной части (Fнепр, Rт.непр, Fнепр/Rт.непр):
                 </td>
-                <td className="py-2.5 px-3 text-right text-white">{win.area_total.toFixed(4)}</td>
-                <td className="py-2.5 px-3 text-right text-sky-400">{win.R_actual}</td>
+                <td className="py-2 px-3 text-right font-semibold">{Number(win.area_opaque.toFixed(5))}</td>
+                <td className="py-2 px-3 text-right">{win.R_opaque.toFixed(2)}</td>
+                <td className="py-2 px-3 text-right text-emerald-400">{win.F_over_R_opaque.toFixed(4)}</td>
+              </tr>
+              <tr className="border-b border-slate-800/80 text-sky-300">
+                <td colSpan={6} className="py-2 px-3 font-sans text-right">
+                  Итого по светопрозрачной части (Fсв, Rт.св, Fсв/Rт.св):
+                </td>
+                <td className="py-2 px-3 text-right font-semibold">{Number(win.area_transparent.toFixed(5))}</td>
+                <td className="py-2 px-3 text-right">{win.R_transparent.toFixed(2)}</td>
+                <td className="py-2 px-3 text-right text-emerald-400">{win.F_over_R_transparent.toFixed(4)}</td>
+              </tr>
+              <tr className="font-bold">
+                <td colSpan={6} className="py-2.5 px-3 font-sans text-right text-slate-200">
+                  Итого по окну (Fок / Σ(Fᵢ/Rᵢ) → Rт.ок = {win.R_actual} м²·°С/Вт):
+                </td>
+                <td className="py-2.5 px-3 text-right text-white">{Number(win.area_total.toFixed(5))}</td>
+                <td className="py-2.5 px-3 text-right text-sky-400">{win.R_actual.toFixed(2)}</td>
                 <td className="py-2.5 px-3 text-right text-emerald-400">{win.sum_F_over_R.toFixed(4)}</td>
               </tr>
             </tfoot>
@@ -261,9 +277,9 @@ export const WindowCalculator: React.FC<WindowCalculatorProps> = ({
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pt-1">
               <span>H = 3,7 + 3,0·{win.floors.length} = <b className="text-white">{win.H_building.toFixed(1)} м</b></span>
-              <span>ρн = <b className="text-white">{win.rho_n}</b> кг/м³</span>
-              <span>ρв = <b className="text-white">{win.rho_v}</b> кг/м³</span>
-              <span>ρн−ρв = <b className="text-sky-300">{win.delta_rho}</b> кг/м³</span>
+              <span>ρн = <b className="text-white">{win.rho_n.toFixed(2)}</b> кг/м³</span>
+              <span>ρв = <b className="text-white">{win.rho_v.toFixed(2)}</b> кг/м³</span>
+              <span>ρн−ρв = <b className="text-sky-300">{win.delta_rho.toFixed(2)}</b> кг/м³</span>
               <span>vср = <b className="text-white">{win.v_sr}</b> м/с</span>
               <span>cн−cп = <b className="text-white">{win.delta_c}</b></span>
               <span>Gнорм = <b className="text-emerald-400">{win.G_norm.toFixed(1)}</b> кг/(м²·ч)</span>
@@ -299,7 +315,7 @@ export const WindowCalculator: React.FC<WindowCalculatorProps> = ({
             <span>Таблица 6.3 — Поэтажный расчет требуемого сопротивления воздухопроницанию Rв.тр</span>
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Δpᵢ = 0,55·(H − hᵢ)·g·(ρн − ρв) + 0,03·kᵢ·ρн·v²·(cн − cп); Rв.тр = (1 / Gнорм)·(Δpᵢ / Δp₀)^(2/3), Δp₀ = 10 Па.
+            Δpᵢ = (H − hᵢ)·g·(ρн − ρв) + 0,5·ρн·vср²·(cн − cп)·kᵢ (ф. 6.2 Шибеко); Rв.тр = (1 / Gнорм)·(Δpᵢ / Δp₀)^(2/3), Δp₀ = 10 Па.
           </p>
         </div>
 
@@ -326,8 +342,8 @@ export const WindowCalculator: React.FC<WindowCalculatorProps> = ({
                   <td className="py-2 px-2.5 text-white font-bold">{f.floor}</td>
                   <td className="py-2 px-2.5 text-right text-slate-400">{f.H_building.toFixed(1)}</td>
                   <td className="py-2 px-2.5 text-right text-slate-300">{f.height.toFixed(1)}</td>
-                  <td className="py-2 px-2.5 text-right text-slate-400">{win.delta_rho.toFixed(3)}</td>
-                  <td className="py-2 px-2.5 text-right text-slate-400">{win.rho_n.toFixed(3)}</td>
+                  <td className="py-2 px-2.5 text-right text-slate-400">{win.delta_rho.toFixed(2)}</td>
+                  <td className="py-2 px-2.5 text-right text-slate-400">{win.rho_n.toFixed(2)}</td>
                   <td className="py-2 px-2.5 text-right text-slate-400">{win.v_sr.toFixed(1)}</td>
                   <td className="py-2 px-2.5 text-right text-slate-400">{win.delta_c.toFixed(1)}</td>
                   <td className="py-2 px-2.5 text-right text-sky-300">{f.k_i.toFixed(3)}</td>

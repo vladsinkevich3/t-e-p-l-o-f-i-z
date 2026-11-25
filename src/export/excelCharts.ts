@@ -137,9 +137,6 @@ function buildChartXml(spec: ExcelChartSpec): string {
         .join('')
     : '';
 
-  const xMaxTag =
-    spec.xMaxHint && spec.xMaxHint > 0 ? `<c:max val="${spec.xMaxHint}"/>` : '';
-
   const secondaryPlotXml = hasSecondary
     ? `<c:scatterChart>` +
       `<c:scatterStyle val="smoothMarker"/>` +
@@ -153,7 +150,7 @@ function buildChartXml(spec: ExcelChartSpec): string {
   const secondaryAxesXml = hasSecondary
     ? `<c:valAx>` +
       `<c:axId val="1003"/>` +
-      `<c:scaling><c:orientation val="minMax"/><c:min val="0"/>${xMaxTag}</c:scaling>` +
+      `<c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling>` +
       `<c:delete val="1"/>` +
       `<c:axPos val="t"/>` +
       `<c:numFmt formatCode="General" sourceLinked="1"/>` +
@@ -204,7 +201,7 @@ function buildChartXml(spec: ExcelChartSpec): string {
     `${secondaryPlotXml}` +
     `<c:valAx>` +
     `<c:axId val="1001"/>` +
-    `<c:scaling><c:orientation val="minMax"/><c:min val="0"/>${xMaxTag}</c:scaling>` +
+    `<c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling>` +
     `<c:delete val="0"/>` +
     `<c:axPos val="b"/>` +
     `<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="E2E8F0"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>` +

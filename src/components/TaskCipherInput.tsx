@@ -24,7 +24,7 @@ import {
   BUILDING_TYPES,
   getHumidityRegimeName,
 } from '../data/buildingTypes';
-import { Sparkles, MapPin, Building, Layers, ShieldCheck, Thermometer, Sliders, Search, Droplets, Gauge, CheckCircle2, FileSpreadsheet, Download } from 'lucide-react';
+import { Sparkles, MapPin, Building, Layers, ShieldCheck, Thermometer, Sliders, Search, Droplets, Gauge, CheckCircle2, FileSpreadsheet, FileText, Download } from 'lucide-react';
 
 interface TaskCipherInputProps {
   cipher: DecodedCipher;
@@ -32,6 +32,7 @@ interface TaskCipherInputProps {
   onChangeCipher: (newCipher: DecodedCipher) => void;
   onOpenOverridesEditor?: () => void;
   onExportExcel?: () => void;
+  onExportWord?: () => void;
 }
 
 export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
@@ -40,6 +41,7 @@ export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
   onChangeCipher,
   onOpenOverridesEditor,
   onExportExcel,
+  onExportWord,
 }) => {
   const [citySearch, setCitySearch] = useState('');
 
@@ -89,7 +91,7 @@ export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Баннер автономной книги Microsoft Excel (.xlsx) с 17 листами и живыми формулами */}
+      {/* Баннер автономной книги Microsoft Excel (.xlsx) с 18 листами и экспорта в Microsoft Word (.docx) */}
       {onExportExcel && (
         <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900 to-blue-950/60 border border-emerald-500/30 rounded-2xl p-5 shadow-lg">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -100,30 +102,42 @@ export const TaskCipherInput: React.FC<TaskCipherInputProps> = ({
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-white">
-                    Автономный калькулятор Microsoft Excel (.xlsx) — 16 листов с формулами, графиками и AutoCAD
+                    Автономный калькулятор Microsoft Excel (.xlsx, 18 листов) и пояснительная записка Word (.docx)
                   </h2>
                   <p className="text-xs text-slate-300">
-                    Скачайте готовую книгу, откройте в Excel и ведите любые расчеты без интернета: выпадающие списки, листы расчета выбранной стены и покрытия + сравнение всех схем (С1–С30 и П1–П30), выбор пароизоляции, окна по Шибеко (табл. 6.1–6.4), 4 нативных графика тепловлажностного режима по Шибеко и калькулятор координат X,Y для AutoCAD с инструкцией.
+                    Скачайте расчетную книгу Excel (включая листы «В_отчет» и «Формулы_расчета», 4 графика Шибеко и AutoCAD) или готовую пояснительную записку Microsoft Word (.docx) с полным сохранением структуры таблиц из листа «В_отчет».
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 pt-1 text-[11px] text-slate-300">
-                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Ввод_и_Итоги (выпадающие списки)</span>
-                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Стена_Расчет + Стены_Все_Схемы</span>
-                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Покрытие_Расчет + Покрытия_Все_Схемы</span>
-                <span className="bg-slate-900/90 border border-emerald-700/70 text-emerald-300 rounded-md px-2 py-0.5">Графики_Шибеко (4 нативных графика)</span>
-                <span className="bg-slate-900/90 border border-cyan-700/70 text-cyan-300 rounded-md px-2 py-0.5">AutoCAD_Графики (PLINE + инструкция)</span>
-                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Окна по Шибеко (табл. 6.1–6.4)</span>
+                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Ввод_и_Итоги</span>
+                <span className="bg-slate-900/90 border border-amber-700/70 text-amber-300 rounded-md px-2 py-0.5">В_отчет (таблицы ГОСТ)</span>
+                <span className="bg-slate-900/90 border border-indigo-700/70 text-indigo-300 rounded-md px-2 py-0.5">Формулы_расчета</span>
+                <span className="bg-slate-900/90 border border-slate-700/80 rounded-md px-2 py-0.5">Стена_Расчет + Покрытие_Расчет</span>
+                <span className="bg-slate-900/90 border border-emerald-700/70 text-emerald-300 rounded-md px-2 py-0.5">Графики_Шибеко (4 графика)</span>
+                <span className="bg-slate-900/90 border border-cyan-700/70 text-cyan-300 rounded-md px-2 py-0.5">AutoCAD_Графики</span>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={onExportExcel}
-              className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm shadow-lg shadow-emerald-950/50 transition flex items-center justify-center space-x-2 shrink-0 cursor-pointer"
-            >
-              <Download className="w-4 h-4" />
-              <span>Скачать Excel (.xlsx)</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onExportExcel}
+                className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm shadow-lg shadow-emerald-950/50 transition flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Скачать Excel (.xlsx)</span>
+              </button>
+              {onExportWord && (
+                <button
+                  type="button"
+                  onClick={onExportWord}
+                  className="px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm shadow-lg shadow-indigo-950/50 transition flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Скачать Word (.docx)</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

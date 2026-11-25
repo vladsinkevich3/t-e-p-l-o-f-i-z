@@ -6,6 +6,11 @@
 
 import { CITIES_DATA } from '../data/climate';
 import { BuildingTypeId, BUILDING_TYPES } from '../data/buildingTypes';
+import {
+  WallVaporBarrierPlacement,
+  RoofVaporBarrierPlacement,
+  CustomVaporBarrierParams,
+} from '../data/vaporBarriers';
 
 export interface CustomLayerOverride {
   id?: string;
@@ -28,6 +33,13 @@ export interface HollowCoreSlabOverride {
   R_slab_override?: number; // м²·°С/Вт
 }
 
+export interface CustomPipeSectionOverride {
+  temp: number; // Температура теплоносителя t_т, °C
+  dy: number; // Условный проход d_у, мм
+  length: number; // Длина участка l_i, м
+  label?: string; // Опциональное наименование участка
+}
+
 export interface CrawlSpacePipesOverride {
   pipe1_temp?: number;
   pipe1_dy?: number;
@@ -38,6 +50,7 @@ export interface CrawlSpacePipesOverride {
   pipe3_temp?: number;
   pipe3_dy?: number;
   pipe3_length?: number;
+  customPipes?: CustomPipeSectionOverride[];
   crawlSpaceTempOverride?: number;
   crawlSpaceRHOverride?: number;
 }
@@ -51,8 +64,10 @@ export interface WindowOverride {
 }
 
 export interface VaporBarrierConfig {
-  materialId: string; // ID из VAPOR_BARRIER_MATERIALS ('none' | 'pe_film_1' | ...)
+  materialId: string; // ID из VAPOR_BARRIER_MATERIALS ('none' | 'pe_film_1' | ...) или 'custom'
   thicknessMm?: number; // Толщина в мм (если не задана — базовая для материала)
+  placement?: WallVaporBarrierPlacement | RoofVaporBarrierPlacement; // Положение пароизоляции (по умолч. по нормам СП 2.04.01: 'before_insulation')
+  custom?: CustomVaporBarrierParams; // Параметры пользовательской пароизоляции при materialId === 'custom'
 }
 
 export interface CalculationOverrides {

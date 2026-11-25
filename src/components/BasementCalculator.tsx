@@ -6,21 +6,116 @@
 
 import React from 'react';
 import { FullCourseworkCalculation } from '../logic/calculations';
-import { CheckCircle2, AlertTriangle, Flame, Droplets, Thermometer, Layers } from 'lucide-react';
+import { DecodedCipher, CustomPipeSectionOverride } from '../logic/decodeCipher';
+import { APPENDIX_O_DIAMETERS_MM } from '../data/normative';
+import {
+  CheckCircle2,
+  AlertTriangle,
+  Flame,
+  Droplets,
+  Layers,
+  Plus,
+  Trash2,
+  RotateCcw,
+} from 'lucide-react';
 import { CrossSectionTable } from './CrossSectionTable';
 import { NormativeWarningBanner } from './NormativeWarningBanner';
 
 interface BasementCalculatorProps {
   calc: FullCourseworkCalculation;
+  cipher?: DecodedCipher;
+  onChangeCipher?: (newCipher: DecodedCipher) => void;
   onOpenOverridesEditor?: () => void;
 }
 
+const STANDARD_TEMPS_C = [50, 60, 70, 80, 90, 95, 100, 105];
+
 export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
   calc,
+  cipher,
+  onChangeCipher,
   onOpenOverridesEditor,
 }) => {
   const { basement, internalConditions } = calc;
   const basementCheck = calc.normativeChecks.find((c) => c.id === 'basement');
+
+  const updatePipesList = (nextPipes: CustomPipeSectionOverride[] | undefined) => {
+    if (!cipher || !onChangeCipher) return;
+    onChangeCipher({
+      ...cipher,
+      overrides: {
+        ...cipher.overrides,
+        crawlSpacePipes: {
+          ...cipher.overrides?.crawlSpacePipes,
+          customPipes: nextPipes,
+        },
+      },
+    });
+  };
+
+  const getCurrentPipesForEdit = (): CustomPipeSectionOverride[] =>
+    basement.pipesDetails.map((p) => ({
+      temp: p.temp,
+      dy: p.dy,
+      length: p.length,
+    }));
+
+  const handlePipeFieldChange = (
+    idx: number,
+    field: 'temp' | 'dy' | 'length',
+    rawValue: number
+  ) => {
+    const list = getCurrentPipesForEdit();
+    if (!list[idx]) return;
+    list[idx] = {
+      ...list[idx],
+      [field]: isNaN(rawValue) ? 0 : rawValue,
+    };
+    updatePipesList(list);
+  };
+
+  const handleAddPipeSection = () => {
+    const list = getCurrentPipesForEdit();
+    const last = list[list.length - 1] || { temp: 70, dy: 25, length: 10 };
+    list.push({
+      temp: last.temp,
+      dy: last.dy,
+      length: 10,
+    });
+    updatePipesList(list);
+  };
+
+  const handleRemovePipeSection = (idx: number) => {
+    const list = getCurrentPipesForEdit();
+    if (list.length <= 1) return;
+    list.splice(idx, 1);
+    updatePipesList(list);
+  };
+
+  const handleResetVariantPipes = () => {
+    if (!cipher || !onChangeCipher) return;
+    onChangeCipher({
+      ...cipher,
+      overrides: {
+        ...cipher.overrides,
+        crawlSpacePipes: {
+          ...cipher.overrides?.crawlSpacePipes,
+          pipe1_temp: undefined,
+          pipe1_dy: undefined,
+          pipe1_length: undefined,
+          pipe2_temp: undefined,
+          pipe2_dy: undefined,
+          pipe2_length: undefined,
+          pipe3_temp: undefined,
+          pipe3_dy: undefined,
+          pipe3_length: undefined,
+          customPipes: undefined,
+        },
+      },
+    });
+  };
+
+  const hasCustomPipes = Boolean(cipher?.overrides?.crawlSpacePipes?.customPipes);
 
   return (
     <div className="space-y-6">
@@ -128,7 +223,7 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
               {basement.pipeHeatGains_total} <span className="text-xs font-sans text-slate-400">Вт</span>
             </div>
             <span className="text-[11px] text-slate-500 block mt-1">
-              Отопление + ГВС в подполье
+              Участков: {basement.pipesDetails.length} (Прил. О Шибеко)
             </span>
           </div>
         </div>
@@ -203,43 +298,169 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
         </div>
       </div>
 
-      {/* Таблица трубопроводов в техническом подполье */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <h3 className="text-base font-semibold text-white mb-4 flex items-center space-x-2">
-          <Flame className="w-5 h-5 text-amber-400" />
-          <span>Тепловыделения трубопроводов инженерных сетей в подполье (Таблица 1.6)</span>
-        </h3>
+      {/* Интерактивная таблица трубопроводов в техническом подполье */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div>
+            <h3 className="text-base font-semibold text-white flex items-center space-x-2">
+              <Flame className="w-5 h-5 text-amber-400" />
+              <span>
+                Тепловыделения трубопроводов инженерных сетей в подполье (Табл. 1.6 и Прил. О Шибеко)
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Вы можете добавлять, удалять и редактировать любое количество участков трубопроводов (tт, dу, lᵢ). Линейная плотность теплового потока qᵢ⁵ определяется автоматически по Приложению О (А. С. Шибеко 2018, стр. 108).
+            </p>
+          </div>
+
+          {cipher && onChangeCipher && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAddPipeSection}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white shadow transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Добавить участок</span>
+              </button>
+              {hasCustomPipes && (
+                <button
+                  type="button"
+                  onClick={handleResetVariantPipes}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Сбросить по варианту ({basement.construction.id})</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 bg-slate-950/60 font-semibold">
                 <th className="py-2.5 px-3">№</th>
-                <th className="py-2.5 px-3">Температура теплоносителя (°C)</th>
-                <th className="py-2.5 px-3">Условный диаметр Dy (мм)</th>
-                <th className="py-2.5 px-3">Длина участка l (м)</th>
-                <th className="py-2.5 px-3">Погонные теплопотери q (Вт/м)</th>
-                <th className="py-2.5 px-3">Суммарный тепловой поток Q (Вт)</th>
+                <th className="py-2.5 px-3">Температура теплоносителя tт (°C)</th>
+                <th className="py-2.5 px-3">Условный диаметр dу (мм)</th>
+                <th className="py-2.5 px-3">Длина участка lᵢ (м)</th>
+                <th className="py-2.5 px-3">Погонные теплопотери qᵢ⁵ (Вт/м)</th>
+                <th className="py-2.5 px-3">Тепловой поток Qᵢ = qᵢ⁵·lᵢ (Вт)</th>
+                {cipher && onChangeCipher && <th className="py-2.5 px-3 text-right">Действие</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {basement.pipesDetails.map((p, idx) => (
                 <tr key={idx} className="hover:bg-slate-800/30 transition">
                   <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
-                  <td className="py-2 px-3 text-amber-300 font-bold">{p.temp} °C</td>
-                  <td className="py-2 px-3 text-white">Dy {p.dy}</td>
-                  <td className="py-2 px-3 text-blue-300">{p.length} м</td>
+                  <td className="py-2 px-3">
+                    {cipher && onChangeCipher ? (
+                      <div className="flex items-center space-x-1.5">
+                        <select
+                          aria-label={`Температура участка ${idx + 1}`}
+                          value={STANDARD_TEMPS_C.includes(p.temp) ? p.temp : 'custom'}
+                          onChange={(e) => {
+                            if (e.target.value !== 'custom') {
+                              handlePipeFieldChange(idx, 'temp', Number(e.target.value));
+                            }
+                          }}
+                          className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-amber-300 font-bold text-xs focus:border-teal-500 focus:outline-none"
+                        >
+                          {STANDARD_TEMPS_C.map((tVal) => (
+                            <option key={tVal} value={tVal}>
+                              {tVal} °C
+                            </option>
+                          ))}
+                          {!STANDARD_TEMPS_C.includes(p.temp) && (
+                            <option value="custom">{p.temp} °C</option>
+                          )}
+                        </select>
+                        <input
+                          type="number"
+                          step="1"
+                          min="20"
+                          max="150"
+                          aria-label={`Ввод температуры участка ${idx + 1}`}
+                          value={p.temp}
+                          onChange={(e) =>
+                            handlePipeFieldChange(idx, 'temp', parseFloat(e.target.value))
+                          }
+                          className="w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-amber-300 font-bold text-xs focus:border-teal-500 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-amber-300 font-bold">{p.temp} °C</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3">
+                    {cipher && onChangeCipher ? (
+                      <select
+                        aria-label={`Диаметр участка ${idx + 1}`}
+                        value={p.dy}
+                        onChange={(e) =>
+                          handlePipeFieldChange(idx, 'dy', Number(e.target.value))
+                        }
+                        className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs focus:border-teal-500 focus:outline-none"
+                      >
+                        {APPENDIX_O_DIAMETERS_MM.map((dVal) => (
+                          <option key={dVal} value={dVal}>
+                            dу {dVal} мм
+                          </option>
+                        ))}
+                        {!APPENDIX_O_DIAMETERS_MM.includes(
+                          p.dy as (typeof APPENDIX_O_DIAMETERS_MM)[number]
+                        ) && <option value={p.dy}>dу {p.dy} мм</option>}
+                      </select>
+                    ) : (
+                      <span className="text-white">Dy {p.dy}</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3">
+                    {cipher && onChangeCipher ? (
+                      <div className="flex items-center space-x-1">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          aria-label={`Длина участка ${idx + 1}`}
+                          value={p.length}
+                          onChange={(e) =>
+                            handlePipeFieldChange(idx, 'length', parseFloat(e.target.value))
+                          }
+                          className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-blue-300 font-semibold text-xs focus:border-teal-500 focus:outline-none"
+                        />
+                        <span className="text-slate-400">м</span>
+                      </div>
+                    ) : (
+                      <span className="text-blue-300">{p.length} м</span>
+                    )}
+                  </td>
                   <td className="py-2 px-3 text-slate-300">{p.q_heat_loss} Вт/м</td>
-                  <td className="py-2 px-3 text-emerald-400 font-semibold">{p.q_total} Вт</td>
+                  <td className="py-2 px-3 text-emerald-400 font-semibold">{p.q_total.toFixed(1)} Вт</td>
+                  {cipher && onChangeCipher && (
+                    <td className="py-2 px-3 text-right">
+                      <button
+                        type="button"
+                        disabled={basement.pipesDetails.length <= 1}
+                        onClick={() => handleRemovePipeSection(idx)}
+                        title="Удалить участок"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 disabled:opacity-30 transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               <tr className="bg-slate-950/80 font-bold border-t-2 border-slate-700">
                 <td colSpan={5} className="py-2.5 px-3 font-sans text-white">
-                  Суммарные тепловыделения от труб в воздух подполья:
+                  Суммарные тепловыделения от труб в воздух подполья Σ(qᵢ⁵·lᵢ):
                 </td>
                 <td className="py-2.5 px-3 text-amber-400">
-                  {basement.pipeHeatGains_total} Вт
+                  {basement.pipeHeatGains_total.toFixed(1)} Вт
                 </td>
+                {cipher && onChangeCipher && <td />}
               </tr>
             </tbody>
           </table>

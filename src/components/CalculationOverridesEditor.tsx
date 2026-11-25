@@ -18,6 +18,7 @@ import {
   DecodedCipher, 
   CalculationOverrides, 
   CustomLayerOverride, 
+  CustomPipeSectionOverride,
   SHIBEKO_LEGACY_GRODNO 
 } from '../logic/decodeCipher';
 import { FullCourseworkCalculation } from '../logic/calculations';
@@ -73,6 +74,33 @@ export const CalculationOverridesEditor: React.FC<CalculationOverridesEditorProp
       } else {
         updated[k] = value;
       }
+    }
+    if (
+      patch.wallInsulationThickness !== undefined &&
+      !patch.wallCustomLayers &&
+      Array.isArray(updated.wallCustomLayers)
+    ) {
+      updated.wallCustomLayers = (updated.wallCustomLayers as CustomLayerOverride[]).map((l) =>
+        l.isInsulation ? { ...l, thickness: patch.wallInsulationThickness! } : l
+      );
+    }
+    if (
+      patch.roofInsulationThickness !== undefined &&
+      !patch.roofCustomLayers &&
+      Array.isArray(updated.roofCustomLayers)
+    ) {
+      updated.roofCustomLayers = (updated.roofCustomLayers as CustomLayerOverride[]).map((l) =>
+        l.isInsulation ? { ...l, thickness: patch.roofInsulationThickness! } : l
+      );
+    }
+    if (
+      patch.basementInsulationThickness !== undefined &&
+      !patch.basementCustomLayers &&
+      Array.isArray(updated.basementCustomLayers)
+    ) {
+      updated.basementCustomLayers = (updated.basementCustomLayers as CustomLayerOverride[]).map((l) =>
+        l.isInsulation ? { ...l, thickness: patch.basementInsulationThickness! } : l
+      );
     }
     onUpdateCipher({
       ...cipher,
@@ -226,10 +254,26 @@ export const CalculationOverridesEditor: React.FC<CalculationOverridesEditorProp
   const handleUpdateLayer = (idx: number, patch: Partial<EditableLayerRow>) => {
     const list = [...getActiveLayersList()];
     list[idx] = { ...list[idx], ...patch };
+    const updatedRow = list[idx];
     const serialized = serializeLayers(list);
-    if (selectedLayersTarget === 'wall') updateOverrideField('wallCustomLayers', serialized);
-    else if (selectedLayersTarget === 'roof') updateOverrideField('roofCustomLayers', serialized);
-    else updateOverrideField('basementCustomLayers', serialized);
+    const patchFields: Partial<CalculationOverrides> = {};
+    if (selectedLayersTarget === 'wall') {
+      patchFields.wallCustomLayers = serialized;
+      if (patch.thickness_mm !== undefined && updatedRow?.isInsulation) {
+        patchFields.wallInsulationThickness = Math.max(0, Number(patch.thickness_mm) || 0) / 1000;
+      }
+    } else if (selectedLayersTarget === 'roof') {
+      patchFields.roofCustomLayers = serialized;
+      if (patch.thickness_mm !== undefined && updatedRow?.isInsulation) {
+        patchFields.roofInsulationThickness = Math.max(0, Number(patch.thickness_mm) || 0) / 1000;
+      }
+    } else {
+      patchFields.basementCustomLayers = serialized;
+      if (patch.thickness_mm !== undefined && updatedRow?.isInsulation) {
+        patchFields.basementInsulationThickness = Math.max(0, Number(patch.thickness_mm) || 0) / 1000;
+      }
+    }
+    updateOverrideFields(patchFields);
   };
 
   const handleAddLayer = () => {
@@ -1409,65 +1453,232 @@ export const CalculationOverridesEditor: React.FC<CalculationOverridesEditorProp
                 </div>
               </div>
 
-              {/* Crawl space */}
-              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3 font-mono">
-                <span className="font-semibold text-slate-200 block text-xs font-sans">
-                  Трубопроводы отопления и ГВС в техподполье:
-                </span>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg">
-                    <label className="text-[10px] text-slate-400 font-sans block mb-1">t1 (подача), °C:</label>
-                    <input
-                      type="number"
-                      step="1"
-                      value={currentOverrides.crawlSpacePipes?.pipe1_temp ?? 95}
-                      onChange={(e) => updateOverrideField('crawlSpacePipes', {
-                        ...currentOverrides.crawlSpacePipes,
-                        pipe1_temp: parseFloat(e.target.value) || 95,
-                      })}
-                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs outline-none"
-                    />
+              {/* Crawl space pipes manager */}
+              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-4 font-mono">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                  <div>
+                    <span className="font-semibold text-slate-200 block text-xs font-sans">
+                      Трубопроводы отопления и ГВС в техподполье:
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-sans">
+                      Добавляйте и редактируйте любое количество участков (tт, dу, lᵢ). Потери qᵢ⁵ рассчитываются по Приложению О.
+                    </span>
                   </div>
-
-                  <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg">
-                    <label className="text-[10px] text-slate-400 font-sans block mb-1">t2 (обратка), °C:</label>
-                    <input
-                      type="number"
-                      step="1"
-                      value={currentOverrides.crawlSpacePipes?.pipe2_temp ?? 70}
-                      onChange={(e) => updateOverrideField('crawlSpacePipes', {
-                        ...currentOverrides.crawlSpacePipes,
-                        pipe2_temp: parseFloat(e.target.value) || 70,
-                      })}
-                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs outline-none"
-                    />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const currentList: CustomPipeSectionOverride[] =
+                          currentOverrides.crawlSpacePipes?.customPipes &&
+                          currentOverrides.crawlSpacePipes.customPipes.length > 0
+                            ? [...currentOverrides.crawlSpacePipes.customPipes]
+                            : calc.basement.pipesDetails.map((p) => ({
+                                temp: p.temp,
+                                dy: p.dy,
+                                length: p.length,
+                              }));
+                        const last = currentList[currentList.length - 1] || { temp: 70, dy: 25, length: 10 };
+                        currentList.push({
+                          temp: last.temp,
+                          dy: last.dy,
+                          length: 10,
+                        });
+                        updateOverrideField('crawlSpacePipes', {
+                          ...currentOverrides.crawlSpacePipes,
+                          customPipes: currentList,
+                        });
+                      }}
+                      className="flex items-center space-x-1 px-2.5 py-1 rounded bg-teal-600 hover:bg-teal-500 text-white text-xs font-sans font-semibold cursor-pointer transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Добавить участок</span>
+                    </button>
+                    {currentOverrides.crawlSpacePipes?.customPipes && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateOverrideField('crawlSpacePipes', {
+                            ...currentOverrides.crawlSpacePipes,
+                            customPipes: undefined,
+                            pipe1_temp: undefined,
+                            pipe1_dy: undefined,
+                            pipe1_length: undefined,
+                            pipe2_temp: undefined,
+                            pipe2_dy: undefined,
+                            pipe2_length: undefined,
+                            pipe3_temp: undefined,
+                            pipe3_dy: undefined,
+                            pipe3_length: undefined,
+                          });
+                        }}
+                        className="flex items-center space-x-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-sans cursor-pointer transition"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Сбросить</span>
+                      </button>
+                    )}
                   </div>
+                </div>
 
-                  <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg">
-                    <label className="text-[10px] text-slate-400 font-sans block mb-1">t3 (ГВС), °C:</label>
-                    <input
-                      type="number"
-                      step="1"
-                      value={currentOverrides.crawlSpacePipes?.pipe3_temp ?? 60}
-                      onChange={(e) => updateOverrideField('crawlSpacePipes', {
-                        ...currentOverrides.crawlSpacePipes,
-                        pipe3_temp: parseFloat(e.target.value) || 60,
+                {/* Таблица участков */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 bg-slate-900/50">
+                        <th className="p-1.5 font-sans">№</th>
+                        <th className="p-1.5 font-sans">tт, °C</th>
+                        <th className="p-1.5 font-sans">dу, мм</th>
+                        <th className="p-1.5 font-sans">lᵢ, м</th>
+                        <th className="p-1.5 font-sans">qᵢ⁵, Вт/м</th>
+                        <th className="p-1.5 font-sans">Qᵢ, Вт</th>
+                        <th className="p-1.5 font-sans text-right">Удалить</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/40">
+                      {(
+                        currentOverrides.crawlSpacePipes?.customPipes ||
+                        calc.basement.pipesDetails.map((p) => ({
+                          temp: p.temp,
+                          dy: p.dy,
+                          length: p.length,
+                        }))
+                      ).map((p, idx, arr) => {
+                        const qLinear = calc.basement.pipesDetails[idx]?.q_heat_loss ?? 15;
+                        const qTot = +(qLinear * (p.length || 0)).toFixed(1);
+                        return (
+                          <tr key={idx} className="hover:bg-slate-900/30">
+                            <td className="p-1.5 text-slate-400 font-semibold">{idx + 1}</td>
+                            <td className="p-1.5">
+                              <input
+                                type="number"
+                                step="1"
+                                min="20"
+                                max="150"
+                                value={p.temp}
+                                onChange={(e) => {
+                                  const list = [
+                                    ...(currentOverrides.crawlSpacePipes?.customPipes || arr),
+                                  ];
+                                  list[idx] = { ...list[idx], temp: parseFloat(e.target.value) || 0 };
+                                  updateOverrideField('crawlSpacePipes', {
+                                    ...currentOverrides.crawlSpacePipes,
+                                    customPipes: list,
+                                  });
+                                }}
+                                className="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-amber-300 font-bold text-xs outline-none"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <select
+                                value={p.dy}
+                                onChange={(e) => {
+                                  const list = [
+                                    ...(currentOverrides.crawlSpacePipes?.customPipes || arr),
+                                  ];
+                                  list[idx] = { ...list[idx], dy: Number(e.target.value) || 25 };
+                                  updateOverrideField('crawlSpacePipes', {
+                                    ...currentOverrides.crawlSpacePipes,
+                                    customPipes: list,
+                                  });
+                                }}
+                                className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-white text-xs outline-none"
+                              >
+                                {[15, 20, 25, 32, 40, 50, 65, 70, 80, 100, 125, 150].map((dVal) => (
+                                  <option key={dVal} value={dVal}>
+                                    dу {dVal}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                value={p.length}
+                                onChange={(e) => {
+                                  const list = [
+                                    ...(currentOverrides.crawlSpacePipes?.customPipes || arr),
+                                  ];
+                                  list[idx] = { ...list[idx], length: parseFloat(e.target.value) || 0 };
+                                  updateOverrideField('crawlSpacePipes', {
+                                    ...currentOverrides.crawlSpacePipes,
+                                    customPipes: list,
+                                  });
+                                }}
+                                className="w-20 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-blue-300 font-semibold text-xs outline-none"
+                              />
+                            </td>
+                            <td className="p-1.5 text-slate-300">{qLinear}</td>
+                            <td className="p-1.5 text-emerald-400 font-semibold">{qTot}</td>
+                            <td className="p-1.5 text-right">
+                              <button
+                                type="button"
+                                disabled={arr.length <= 1}
+                                onClick={() => {
+                                  if (arr.length <= 1) return;
+                                  const list = [
+                                    ...(currentOverrides.crawlSpacePipes?.customPipes || arr),
+                                  ];
+                                  list.splice(idx, 1);
+                                  updateOverrideField('crawlSpacePipes', {
+                                    ...currentOverrides.crawlSpacePipes,
+                                    customPipes: list,
+                                  });
+                                }}
+                                className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 disabled:opacity-20 cursor-pointer transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
                       })}
-                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs outline-none"
-                    />
-                  </div>
+                    </tbody>
+                  </table>
+                </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg">
-                    <label className="text-[10px] text-slate-400 font-sans block mb-1">t воздуха подполья tп, °C:</label>
+                    <label className="text-[10px] text-slate-400 font-sans block mb-1">
+                      Ручная температура воздуха подполья tп, °C:
+                    </label>
                     <input
                       type="number"
                       step="0.5"
-                      placeholder="Авто"
+                      placeholder="Авто (из уравнения баланса)"
                       value={currentOverrides.crawlSpacePipes?.crawlSpaceTempOverride ?? ''}
-                      onChange={(e) => updateOverrideField('crawlSpacePipes', {
-                        ...currentOverrides.crawlSpacePipes,
-                        crawlSpaceTempOverride: isNaN(parseFloat(e.target.value)) ? undefined : parseFloat(e.target.value),
-                      })}
+                      onChange={(e) =>
+                        updateOverrideField('crawlSpacePipes', {
+                          ...currentOverrides.crawlSpacePipes,
+                          crawlSpaceTempOverride: isNaN(parseFloat(e.target.value))
+                            ? undefined
+                            : parseFloat(e.target.value),
+                        })
+                      }
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs outline-none"
+                    />
+                  </div>
+
+                  <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg">
+                    <label className="text-[10px] text-slate-400 font-sans block mb-1">
+                      Относительная влажность подполья φп, %:
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="30"
+                      max="100"
+                      placeholder="75%"
+                      value={currentOverrides.crawlSpacePipes?.crawlSpaceRHOverride ?? ''}
+                      onChange={(e) =>
+                        updateOverrideField('crawlSpacePipes', {
+                          ...currentOverrides.crawlSpacePipes,
+                          crawlSpaceRHOverride: isNaN(parseFloat(e.target.value))
+                            ? undefined
+                            : parseFloat(e.target.value),
+                        })
+                      }
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs outline-none"
                     />
                   </div>
