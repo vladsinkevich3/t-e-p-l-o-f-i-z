@@ -8,6 +8,7 @@ import React from 'react';
 import { FullCourseworkCalculation } from '../logic/calculations';
 import { DecodedCipher, CustomPipeSectionOverride } from '../logic/decodeCipher';
 import { APPENDIX_O_DIAMETERS_MM } from '../data/normative';
+import { BASEMENT_VB_PLACEMENTS } from '../data/vaporBarriers';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -17,9 +18,11 @@ import {
   Plus,
   Trash2,
   RotateCcw,
+  Calculator,
 } from 'lucide-react';
 import { CrossSectionTable } from './CrossSectionTable';
 import { NormativeWarningBanner } from './NormativeWarningBanner';
+import { VaporBarrierEditor } from './VaporBarrierEditor';
 
 interface BasementCalculatorProps {
   calc: FullCourseworkCalculation;
@@ -36,8 +39,18 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
   onChangeCipher,
   onOpenOverridesEditor,
 }) => {
-  const { basement, internalConditions } = calc;
+  const { basement, internalConditions, climate } = calc;
   const basementCheck = calc.normativeChecks.find((c) => c.id === 'basement');
+  const alphaVFloor = cipher?.overrides?.alpha_v_basement ?? 8.7;
+  const alphaNCrawl = cipher?.overrides?.alpha_n_basement ?? 17;
+  const baseInsLambda =
+    cipher?.overrides?.basementInsulationConductivity ??
+    (internalConditions.exploitationConditions === 'А'
+      ? basement.insulation.lambda_A
+      : basement.insulation.lambda_B);
+  const baseSumRLayers = +basement.layers.reduce((sum, l) => sum + l.R, 0).toFixed(3);
+  const baseSumDLayers = +basement.layers.reduce((sum, l) => sum + l.D, 0).toFixed(2);
+  const baseSumRpLayers = +basement.layers.reduce((sum, l) => sum + l.R_p, 0).toFixed(3);
 
   const updatePipesList = (nextPipes: CustomPipeSectionOverride[] | undefined) => {
     if (!cipher || !onChangeCipher) return;
@@ -157,8 +170,8 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
           </div>
         </div>
 
-        {/* 4 ключевые метрики техподполья */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+        {/* 5 ключевых метрик техподполья (включая Rп) */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-5">
           <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
             <span className="text-xs text-slate-400 block">Температура в подполье tп</span>
             <div className="text-xl font-bold font-mono text-teal-400 mt-1">
@@ -226,6 +239,21 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
               Участков: {basement.pipesDetails.length} (Прил. О Шибеко)
             </span>
           </div>
+
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-cyan-500/35 col-span-2 lg:col-span-1">
+            <span className="text-xs text-slate-400 block">Паропроницание Rп.ПТП</span>
+            <div
+              data-testid="basement-summary-rp"
+              className="text-xl font-bold font-mono text-cyan-400 mt-1"
+            >
+              {basement.total_R_p.toFixed(2)} <span className="text-xs font-sans text-slate-400">м²·ч·Па/мг</span>
+            </div>
+            <span className="text-[11px] text-slate-400 font-mono block mt-1">
+              {basement.vaporBarrier
+                ? `в т.ч. ПИ: ${basement.vaporBarrier.R_p.toFixed(2)}`
+                : 'без доп. ПИ'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -251,7 +279,7 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
               tп = {basement.crawlSpaceTemp_t_p} °C, φп = {basement.crawlSpaceRH}%
             </div>
             <p className="text-[11px] font-sans text-slate-500 mt-2">
-              Парциальное давление пара в подполье eп = {((basement.crawlSpaceRH / 100) * 1127).toFixed(1)} Па.
+              Eп({basement.crawlSpaceTemp_t_p}°) = {basement.E_p} Па → eп = ({basement.crawlSpaceRH}%/100)·Eп = <span className="font-mono text-teal-300 font-semibold">{basement.e_p} Па</span>.
             </p>
           </div>
 
@@ -467,6 +495,31 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
         </div>
       </div>
 
+      {/* Пароизоляция перекрытия над техподпольем */}
+      {cipher && onChangeCipher && (
+        <VaporBarrierEditor
+          title="Пароизоляция перекрытия над техподпольем (опционально — Приложение Н / свои параметры)"
+          subtitle="При необходимости выберите пароизоляцию — все параметры (δ, Rп / μ, λ, s, ρ) сразу открываются для редактирования"
+          config={cipher.overrides?.basementVaporBarrier}
+          applied={basement.vaporBarrier}
+          supportAuto={false}
+          totalRp={basement.total_R_p}
+          placements={BASEMENT_VB_PLACEMENTS}
+          defaultPlacement="before_insulation"
+          accent="indigo"
+          testIdPrefix="basement"
+          onChange={(next) =>
+            onChangeCipher({
+              ...cipher,
+              overrides: {
+                ...cipher.overrides,
+                basementVaporBarrier: next,
+              },
+            })
+          }
+        />
+      )}
+
       {/* Слои перекрытия над техподпольем */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
         <h3 className="text-base font-semibold text-white flex items-center space-x-2">
@@ -486,24 +539,117 @@ export const BasementCalculator: React.FC<BasementCalculatorProps> = ({
                 <th className="py-2.5 px-3">s (Вт/м²·°С)</th>
                 <th className="py-2.5 px-3">D = R·s</th>
                 <th className="py-2.5 px-3">μ (мг/м·ч·Па)</th>
+                <th className="py-2.5 px-3">Rп (м²·ч·Па/мг)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {basement.layers.map((l, idx) => (
-                <tr key={idx} className="hover:bg-slate-800/30 transition">
+                <tr
+                  key={idx}
+                  className={`hover:bg-slate-800/30 transition ${
+                    l.isVaporBarrier ? 'bg-cyan-950/20' : ''
+                  }`}
+                >
                   <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
                   <td className="py-2 px-3 font-sans text-white font-medium">{l.name}</td>
                   <td className="py-2 px-3 font-sans text-slate-300">{l.materialName}</td>
-                  <td className="py-2 px-3 text-blue-300">{(l.thickness * 1000).toFixed(l.thickness < 0.001 ? 1 : 0)}</td>
+                  <td className="py-2 px-3 text-blue-300">
+                    {l.thickness * 1000 < 10
+                      ? +(l.thickness * 1000).toFixed(2)
+                      : Math.round(l.thickness * 1000)}
+                  </td>
                   <td className="py-2 px-3 text-slate-300">{l.lambda}</td>
                   <td className="py-2 px-3 text-emerald-400 font-semibold">{l.R.toFixed(3)}</td>
                   <td className="py-2 px-3 text-slate-300">{l.s}</td>
                   <td className="py-2 px-3 text-amber-400">{l.D.toFixed(2)}</td>
                   <td className="py-2 px-3 text-slate-300">{l.mu}</td>
+                  <td className="py-2 px-3 text-cyan-300">{l.R_p.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot className="border-t-2 border-slate-800 bg-slate-950 font-mono font-bold text-slate-200">
+              <tr>
+                <td colSpan={3} className="py-2.5 px-3 font-sans text-right">
+                  Суммарно по перекрытию (с 1/37 и 1/77 для Rп):
+                </td>
+                <td className="py-2.5 px-3 text-white">
+                  {Math.round(basement.layers.reduce((sum, l) => sum + l.thickness, 0) * 1000)} мм
+                </td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-emerald-400">{baseSumRLayers.toFixed(3)}</td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-amber-400">{baseSumDLayers.toFixed(2)}</td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-cyan-400">{basement.total_R_p.toFixed(2)}</td>
+              </tr>
+            </tfoot>
           </table>
+        </div>
+      </div>
+
+      {/* Пошаговые формулы расчета перекрытия над техподпольем */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <Calculator className="w-5 h-5 text-teal-400" />
+          <h3 className="text-base font-bold text-white">
+            Формулы и этапы расчета перекрытия и теплового баланса техподполья
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              1. Подбор толщины утеплителя перекрытия δут и RПТП:
+            </span>
+            <div className="text-blue-300">
+              δут.расч = (Rнорм.ПТП − Rбез_ут) × λут = ({basement.R_required} − {basement.R_without_insulation}) × {baseInsLambda} ={' '}
+              <span className="font-bold text-white">{basement.delta_insulation_calc} м</span>
+            </div>
+            <div className="text-blue-300">
+              RПТП = 1/αв + Σ(δᵢ/λᵢ) + 1/αн.п = 1/{alphaVFloor} + {baseSumRLayers} + 1/{alphaNCrawl} ={' '}
+              <span className="font-bold text-white">{basement.R_ptp} м²·°С/Вт</span> ≥ {basement.R_required}
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              2. Перепад на полу Δtв.п и температура поверхности пола τв.пол:
+            </span>
+            <div className="text-blue-300">
+              Δtв.п = (tв − tп) / (RПТП · αв) = ({internalConditions.t_v} − {basement.crawlSpaceTemp_t_p}) / ({basement.R_ptp} · {alphaVFloor}) ={' '}
+              <span className="font-bold text-white">{basement.delta_t_floor} °C</span> ≤ {basement.delta_t_floor_norm} °C
+            </div>
+            <div className="text-emerald-300">
+              τв.пол = tв − Δtв.п = {internalConditions.t_v} − {basement.delta_t_floor} ={' '}
+              <span className="font-bold text-white">{basement.tau_v_floor} °C</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              3. Проверка цокольной стены на конденсацию и теплопотери труб:
+            </span>
+            <div className="text-blue-300">
+              τв.цок = tп − (tп − tн.от) / (Rцок · αн.п) = {basement.crawlSpaceTemp_t_p} − ({basement.crawlSpaceTemp_t_p} − ({climate.t_heating_period})) / (1,25 · {alphaNCrawl}) ={' '}
+              <span className="font-bold text-white">{basement.tau_v_basement_wall} °C</span> &gt; tр.п ({basement.dew_point_basement} °C)
+            </div>
+            <div className="text-amber-300">
+              ΣQтр = Σ(qᵢ⁵ · lᵢ) = <span className="font-bold text-white">{basement.pipeHeatGains_total.toFixed(1)} Вт</span> ({basement.pipesDetails.length} уч., Прил. О)
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              4. Сопротивление паропроницанию перекрытия Rп.ПТП и давление e(x):
+            </span>
+            <div className="text-cyan-300">
+              Rп.ПТП = 1/37 + Σ(δᵢ/μᵢ){basement.vaporBarrier ? ' + Rп.пи' : ''} + 1/77 = 0,027 + {baseSumRpLayers} + 0,013 ={' '}
+              <span className="font-bold text-white">{basement.total_R_p.toFixed(2)} м²·ч·Па/мг</span>
+            </div>
+            <div className="text-slate-300">
+              e(x) = eв − ((eв − eп) / Rп.ПТП) · ΣRп = {internalConditions.e_v} − (({internalConditions.e_v} − {basement.e_p}) / {basement.total_R_p.toFixed(2)}) · ΣRп
+            </div>
+          </div>
         </div>
       </div>
 

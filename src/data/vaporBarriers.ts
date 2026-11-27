@@ -40,6 +40,12 @@ export type RoofVaporBarrierPlacement =
   | 'after_plaster'
   | 'after_insulation';
 
+export type BasementVaporBarrierPlacement =
+  | 'before_insulation'
+  | 'inner_surface'
+  | 'after_layer_1'
+  | 'after_insulation';
+
 export interface VaporBarrierPlacementOption<T extends string> {
   id: T;
   label: string;
@@ -124,6 +130,37 @@ export const ROOF_VB_PLACEMENTS: VaporBarrierPlacementOption<RoofVaporBarrierPla
   },
 ];
 
+export const BASEMENT_VB_PLACEMENTS: VaporBarrierPlacementOption<BasementVaporBarrierPlacement>[] = [
+  {
+    id: 'before_insulation',
+    label: 'По нормам СП 2.04.01: перед утеплителем (с теплой стороны пола)',
+    excelLabel: 'Перед утеплителем (по нормам СП 2.04.01)',
+    isNormative: true,
+    note: 'Рекомендуется со стороны отапливаемого помещения 1-го этажа перед теплоизоляционным слоем',
+  },
+  {
+    id: 'inner_surface',
+    label: 'Под покрытием пола 1-го этажа (верхняя поверхность)',
+    excelLabel: 'Под покрытием пола (верх)',
+    isNormative: false,
+    note: 'Укладка пароизоляционного слоя непосредственно на верхней границе перекрытия',
+  },
+  {
+    id: 'after_layer_1',
+    label: 'После 1-го слоя пола',
+    excelLabel: 'После слоя 1',
+    isNormative: false,
+    note: 'Укладка сразу за верхним отделочным слоем пола 1-го этажа',
+  },
+  {
+    id: 'after_insulation',
+    label: 'После утеплителя (со стороны техподполья)',
+    excelLabel: 'После утеплителя (со стороны подполья)',
+    isNormative: false,
+    note: 'Размещение со стороны холодного техподполья — проверяйте отсутствие накопления влаги',
+  },
+];
+
 export function getWallPlacementOption(
   placement?: string
 ): VaporBarrierPlacementOption<WallVaporBarrierPlacement> {
@@ -137,6 +174,14 @@ export function getRoofPlacementOption(
 ): VaporBarrierPlacementOption<RoofVaporBarrierPlacement> {
   return (
     ROOF_VB_PLACEMENTS.find((p) => p.id === placement) ?? ROOF_VB_PLACEMENTS[0]
+  );
+}
+
+export function getBasementPlacementOption(
+  placement?: string
+): VaporBarrierPlacementOption<BasementVaporBarrierPlacement> {
+  return (
+    BASEMENT_VB_PLACEMENTS.find((p) => p.id === placement) ?? BASEMENT_VB_PLACEMENTS[0]
   );
 }
 
@@ -393,7 +438,95 @@ export function calculateVaporBarrierRp(materialId?: string, thicknessMm?: numbe
 }
 
 /**
- * Универсальный резолвер пароизоляции: поддерживает и справочник Приложения Н, и пользовательский материал ('custom').
+ * Возвращает полный редактируемый набор параметров пароизоляции для UI-редактора,
+ * независимо от того, выбран ли материал из справочника Приложения Н или 'custom'.
+ */
+export function getEditableVaporBarrierParams(config?: {
+  materialId?: string;
+  thicknessMm?: number;
+  custom?: CustomVaporBarrierParams;
+}): CustomVaporBarrierParams {
+  if (!config || !config.materialId || config.materialId === 'none') {
+    return { ...DEFAULT_CUSTOM_VAPOR_BARRIER };
+  }
+  if (config.materialId === 'custom') {
+    const c = { ...DEFAULT_CUSTOM_VAPOR_BARRIER, ...(config.custom || {}) };
+    const thkMm =
+      config.thicknessMm !== undefined && config.thicknessMm > 0
+        ? config.thicknessMm
+        : c.thicknessMm > 0
+        ? c.thicknessMm
+        : 1.0;
+    const thkM = thkMm / 1000;
+    const mode = c.inputMode ?? 'rp';
+    const rpVal =
+      mode === 'mu'
+        ? c.mu && c.mu > 0
+          ? +(thkM / c.mu).toFixed(3)
+          : 5.0
+        : c.R_p !== undefined && c.R_p >= 0
+        ? +c.R_p.toFixed(3)
+        : 5.0;
+    const muVal =
+      mode === 'mu'
+        ? c.mu && c.mu > 0
+          ? c.mu
+          : 0.0002
+        : rpVal > 0
+        ? +(thkM / rpVal).toFixed(7)
+        : 0;
+    return {
+      name: c.name || DEFAULT_CUSTOM_VAPOR_BARRIER.name,
+      thicknessMm: thkMm,
+      inputMode: mode,
+      R_p: rpVal,
+      mu: muVal,
+      lambda: c.lambda && c.lambda > 0 ? c.lambda : 0.2,
+      s: c.s !== undefined && c.s >= 0 ? c.s : 3.5,
+      density: c.density !== undefined && c.density >= 0 ? c.density : 1000,
+    };
+  }
+
+  const mat = getVaporBarrierById(config.materialId);
+  if (mat.id === 'none') {
+    return { ...DEFAULT_CUSTOM_VAPOR_BARRIER };
+  }
+  const c = config.custom;
+  const thkMm =
+    config.thicknessMm !== undefined && config.thicknessMm > 0
+      ? config.thicknessMm
+      : c?.thicknessMm && c.thicknessMm > 0
+      ? c.thicknessMm
+      : mat.defaultThicknessMm;
+  const thkM = thkMm / 1000;
+  const scaledRp = calculateVaporBarrierRp(mat.id, thkMm);
+  const mode = c?.inputMode ?? 'rp';
+  let rpVal = scaledRp;
+  let muVal = scaledRp > 0 ? +(thkM / scaledRp).toFixed(7) : 0;
+  if (c) {
+    if (mode === 'mu' && c.mu !== undefined && c.mu > 0) {
+      muVal = c.mu;
+      rpVal = +(thkM / muVal).toFixed(3);
+    } else if (c.R_p !== undefined && c.R_p > 0) {
+      rpVal = +c.R_p.toFixed(3);
+      muVal = +(thkM / rpVal).toFixed(7);
+    }
+  }
+  return {
+    name: c?.name?.trim() ? c.name : mat.name,
+    thicknessMm: thkMm,
+    inputMode: mode,
+    R_p: rpVal,
+    mu: muVal,
+    lambda: c?.lambda && c.lambda > 0 ? c.lambda : mat.lambda,
+    s: c?.s !== undefined && c.s >= 0 ? c.s : mat.s,
+    density: c?.density !== undefined && c.density >= 0 ? c.density : mat.density,
+  };
+}
+
+/**
+ * Универсальный резолвер пароизоляции: поддерживает справочник Приложения Н (включая ручную правку
+ * любых его параметров: названия, δ, Rп, μ, λ, s, ρ) и пользовательский материал ('custom').
  */
 export function resolveVaporBarrier(config?: {
   materialId?: string;
@@ -439,23 +572,68 @@ export function resolveVaporBarrier(config?: {
 
   const mat = getVaporBarrierById(config.materialId);
   if (mat.id === 'none') return null;
+
+  const c = config.custom;
   const thkMm =
     config.thicknessMm !== undefined && config.thicknessMm > 0
       ? config.thicknessMm
+      : c?.thicknessMm && c.thicknessMm > 0
+      ? c.thicknessMm
       : mat.defaultThicknessMm;
-  const rpVal = calculateVaporBarrierRp(mat.id, thkMm);
-  if (rpVal <= 0 || thkMm <= 0) return null;
+  if (thkMm <= 0) return null;
   const thkM = thkMm / 1000;
+  const scaledRp = calculateVaporBarrierRp(mat.id, thkMm);
+
+  let rpVal = scaledRp;
+  let muVal = scaledRp > 0 ? +(thkM / scaledRp).toFixed(7) : 0;
+  let name = mat.name;
+  let shortName = mat.shortName;
+  let lambda = mat.lambda;
+  let s = mat.s;
+  let density = mat.density;
+  let hasOverrides = false;
+
+  if (c) {
+    const mode = c.inputMode ?? 'rp';
+    if (mode === 'mu' && c.mu !== undefined && c.mu > 0) {
+      muVal = c.mu;
+      rpVal = +(thkM / muVal).toFixed(3);
+      if (Math.abs(rpVal - scaledRp) > 0.001) hasOverrides = true;
+    } else if (c.R_p !== undefined && c.R_p > 0) {
+      rpVal = +c.R_p.toFixed(3);
+      muVal = +(thkM / rpVal).toFixed(7);
+      if (Math.abs(rpVal - scaledRp) > 0.001) hasOverrides = true;
+    }
+    if (c.name && c.name.trim() && c.name.trim() !== mat.name) {
+      name = c.name.trim();
+      shortName = name.length > 26 ? name.slice(0, 26) + '…' : name;
+      hasOverrides = true;
+    }
+    if (c.lambda !== undefined && c.lambda > 0 && Math.abs(c.lambda - mat.lambda) > 1e-6) {
+      lambda = c.lambda;
+      hasOverrides = true;
+    }
+    if (c.s !== undefined && c.s >= 0 && Math.abs(c.s - mat.s) > 1e-6) {
+      s = c.s;
+      hasOverrides = true;
+    }
+    if (c.density !== undefined && c.density >= 0 && Math.abs(c.density - mat.density) > 1e-6) {
+      density = c.density;
+      hasOverrides = true;
+    }
+  }
+
+  if (rpVal <= 0) return null;
   return {
     materialId: mat.id,
-    name: mat.name,
-    shortName: mat.shortName,
+    name,
+    shortName,
     thicknessMm: thkMm,
     R_p: rpVal,
-    mu: +(thkM / rpVal).toFixed(7),
-    lambda: mat.lambda,
-    s: mat.s,
-    density: mat.density,
-    isCustom: false,
+    mu: muVal,
+    lambda,
+    s,
+    density,
+    isCustom: hasOverrides,
   };
 }

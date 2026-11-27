@@ -993,7 +993,7 @@ export const ReportPreview: React.FC<ReportPreviewProps> = ({
           </p>
 
           <FormulaRow num="4.1">
-            δ<sub>ут.прин</sub> = <b>{fmtNum(basement.delta_insulation_adopted, 2)} м ({Math.round(basement.delta_insulation_adopted * 1000)} мм)</b>; фактическое R<sub>т.ПТП</sub> = <b>{fmtNum(basement.R_ptp, 2)} м²·°С/Вт</b>
+            δ<sub>ут.прин</sub> = <b>{fmtNum(basement.delta_insulation_adopted, 2)} м ({Math.round(basement.delta_insulation_adopted * 1000)} мм)</b>; фактическое R<sub>т.ПТП</sub> = <b>{fmtNum(basement.R_ptp, 2)} м²·°С/Вт</b>; R<sub>п.ПТП</sub> = <b>{fmtNum(basement.total_R_p, 2)} м²·ч·Па/мг</b>
           </FormulaRow>
           <FormulaRow num="4.2">
             Q<sub>тр</sub> = Σ(q<sub>i</sub> · l<sub>i</sub>) = {basement.pipesDetails.map((p) => `${fmtNum(p.q_heat_loss, 1)}·${p.length}`).join(' + ')} = <b>{fmtNum(basement.pipeHeatGains_total, 1)} Вт</b>

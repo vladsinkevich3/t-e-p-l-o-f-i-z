@@ -8,27 +8,17 @@ import React from 'react';
 import { FullCourseworkCalculation } from '../logic/calculations';
 import { DecodedCipher } from '../logic/decodeCipher';
 import { BUILDING_TYPES } from '../data/buildingTypes';
-import {
-  VAPOR_BARRIER_MATERIALS,
-  WALL_VB_PLACEMENTS,
-  DEFAULT_CUSTOM_VAPOR_BARRIER,
-  CustomVaporBarrierParams,
-  WallVaporBarrierPlacement,
-  getVaporBarrierById,
-  getWallPlacementOption,
-  resolveVaporBarrier,
-} from '../data/vaporBarriers';
+import { WALL_VB_PLACEMENTS } from '../data/vaporBarriers';
 import {
   CheckCircle2,
   AlertTriangle,
   Layers,
   Calculator,
-  ShieldCheck,
   Sliders,
-  RotateCcw,
 } from 'lucide-react';
 import { CrossSectionTable } from './CrossSectionTable';
 import { NormativeWarningBanner } from './NormativeWarningBanner';
+import { VaporBarrierEditor } from './VaporBarrierEditor';
 
 interface WallCalculatorProps {
   calc: FullCourseworkCalculation;
@@ -56,127 +46,10 @@ export const WallCalculator: React.FC<WallCalculatorProps> = ({
       ? wall.insulation.lambda_A
       : wall.insulation.lambda_B);
   const alphaV = cipher.overrides?.alpha_v_wall ?? cipher.overrides?.alpha_v ?? 8.7;
-
-  const wallVbCfg = cipher.overrides?.wallVaporBarrier;
-  const selectedVbId = wallVbCfg?.materialId ?? 'none';
-  const isCustomVb = selectedVbId === 'custom';
-  const selectedVbMat = getVaporBarrierById(selectedVbId);
-  const customVbParams: CustomVaporBarrierParams = {
-    ...DEFAULT_CUSTOM_VAPOR_BARRIER,
-    ...(wallVbCfg?.custom || {}),
-  };
-  const selectedVbThickness = isCustomVb
-    ? wallVbCfg?.thicknessMm ?? customVbParams.thicknessMm
-    : wallVbCfg?.thicknessMm ?? selectedVbMat.defaultThicknessMm;
-  const selectedPlacement: WallVaporBarrierPlacement =
-    (wallVbCfg?.placement as WallVaporBarrierPlacement) ?? 'before_insulation';
-  const placementOpt = getWallPlacementOption(selectedPlacement);
-  const resolvedVb = resolveVaporBarrier(wallVbCfg);
-  const previewVbRp = resolvedVb?.R_p ?? 0;
-
-  const handleVaporBarrierMaterialChange = (materialId: string) => {
-    if (materialId === 'none') {
-      onChangeCipher({
-        ...cipher,
-        overrides: {
-          ...cipher.overrides,
-          wallVaporBarrier: undefined,
-        },
-      });
-      return;
-    }
-    if (materialId === 'custom') {
-      onChangeCipher({
-        ...cipher,
-        overrides: {
-          ...cipher.overrides,
-          wallVaporBarrier: {
-            materialId: 'custom',
-            thicknessMm: customVbParams.thicknessMm,
-            placement: selectedPlacement,
-            custom: customVbParams,
-          },
-        },
-      });
-      return;
-    }
-    const mat = getVaporBarrierById(materialId);
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        wallVaporBarrier: {
-          materialId,
-          thicknessMm: mat.defaultThicknessMm,
-          placement: selectedPlacement,
-        },
-      },
-    });
-  };
-
-  const handleVaporBarrierThicknessChange = (val: string) => {
-    const num = parseFloat(val);
-    if (Number.isNaN(num) || num < 0) return;
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        wallVaporBarrier: {
-          ...wallVbCfg,
-          materialId: selectedVbId,
-          thicknessMm: num,
-          placement: selectedPlacement,
-          custom: isCustomVb ? { ...customVbParams, thicknessMm: num } : wallVbCfg?.custom,
-        },
-      },
-    });
-  };
-
-  const handlePlacementChange = (placement: WallVaporBarrierPlacement) => {
-    if (selectedVbId === 'none') return;
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        wallVaporBarrier: {
-          ...wallVbCfg,
-          materialId: selectedVbId,
-          thicknessMm: selectedVbThickness,
-          placement,
-          custom: isCustomVb ? customVbParams : wallVbCfg?.custom,
-        },
-      },
-    });
-  };
-
-  const handleCustomVbFieldChange = (patch: Partial<CustomVaporBarrierParams>) => {
-    const nextCustom: CustomVaporBarrierParams = {
-      ...customVbParams,
-      ...patch,
-    };
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        wallVaporBarrier: {
-          materialId: 'custom',
-          thicknessMm: nextCustom.thicknessMm,
-          placement: selectedPlacement,
-          custom: nextCustom,
-        },
-      },
-    });
-  };
-
-  const handleResetVaporBarrier = () => {
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        wallVaporBarrier: undefined,
-      },
-    });
-  };
+  const alphaN = cipher.overrides?.alpha_n ?? 23;
+  const wallSumRpLayers = +wall.layers.reduce((sum, l) => sum + l.R_p, 0).toFixed(3);
+  const wallSumRLayers = +wall.layers.reduce((sum, l) => sum + l.R, 0).toFixed(3);
+  const wallEout = wall.crossSectionProfile[wall.crossSectionProfile.length - 1]?.e_partial ?? 0;
 
   return (
     <div className="space-y-6">
@@ -231,8 +104,8 @@ export const WallCalculator: React.FC<WallCalculatorProps> = ({
           </div>
         </div>
 
-        {/* 4 ключевые сводные метрики */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+        {/* 5 ключевых сводных метрик (включая Rп) */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-5">
           <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
             <span className="text-slate-400 text-xs">Принятая толщина утеплителя:</span>
             <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
@@ -299,6 +172,21 @@ export const WallCalculator: React.FC<WallCalculatorProps> = ({
               Eв({internalConditions.t_v}°) = {internalConditions.E_v} Па → eв = {internalConditions.e_v} Па
             </span>
           </div>
+
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-cyan-500/35 col-span-2 lg:col-span-1">
+            <span className="text-slate-400 text-xs">Сопротивление паропроницанию Rп:</span>
+            <div
+              data-testid="wall-summary-rp"
+              className="text-xl font-bold font-mono text-cyan-400 mt-1"
+            >
+              {wall.total_R_p.toFixed(2)} <span className="text-xs font-sans text-slate-400">м²·ч·Па/мг</span>
+            </div>
+            <span className="text-[11px] text-slate-400 font-mono block mt-1">
+              {wall.vaporBarrier
+                ? `в т.ч. ПИ: ${wall.vaporBarrier.R_p.toFixed(2)}`
+                : 'без пароизоляции'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -308,245 +196,28 @@ export const WallCalculator: React.FC<WallCalculatorProps> = ({
         onOpenOverridesEditor={onOpenOverridesEditor}
       />
 
-      {/* Панель выбора пароизоляции наружной стены (СП 2.04.01-2020 п. 10.6, Приложение Н + свой материал) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-          <div className="flex items-center space-x-2">
-            <ShieldCheck className="w-5 h-5 text-cyan-400" />
-            <div>
-              <h3 className="text-sm font-bold text-white">
-                Пароизоляция наружной стены (СП 2.04.01-2020 п. 10.6 — с теплой стороны перед утеплителем)
-              </h3>
-              <p className="text-xs text-slate-400">
-                Выберите материал из Приложения Н или добавьте свою пароизоляцию, настройте расположение — таблица температур и давлений ниже перестроится автоматически
-              </p>
-            </div>
-          </div>
-          {selectedVbId !== 'none' && (
-            <button
-              type="button"
-              onClick={handleResetVaporBarrier}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition inline-flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Убрать пароизоляцию</span>
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-          <div className="md:col-span-5">
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">
-              Материал пароизоляции (Приложение Н / Свой)
-            </label>
-            <select
-              aria-label="Материал пароизоляции стены"
-              value={selectedVbId}
-              onChange={(e) => handleVaporBarrierMaterialChange(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              {VAPOR_BARRIER_MATERIALS.map((mat) => (
-                <option key={mat.id} value={mat.id}>
-                  {mat.name}
-                  {mat.id !== 'none' ? ` (баз. δ=${mat.baseThicknessMm} мм, Rп=${mat.baseRp})` : ''}
-                </option>
-              ))}
-              <option value="custom">+ Своя пароизоляция (ввести параметры вручную)</option>
-            </select>
-          </div>
-
-          <div className="md:col-span-4">
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">
-              Расположение в конструкции стены
-            </label>
-            <select
-              aria-label="Расположение пароизоляции стены"
-              disabled={selectedVbId === 'none'}
-              value={selectedPlacement}
-              onChange={(e) => handlePlacementChange(e.target.value as WallVaporBarrierPlacement)}
-              className="w-full bg-slate-950 border border-slate-700 disabled:opacity-50 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              {WALL_VB_PLACEMENTS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="md:col-span-1">
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">
-              δ, мм
-            </label>
-            <input
-              aria-label="Толщина пароизоляции стены, мм"
-              type="number"
-              step="0.05"
-              min="0"
-              disabled={selectedVbId === 'none'}
-              value={selectedVbId === 'none' ? 0 : selectedVbThickness}
-              onChange={(e) => handleVaporBarrierThicknessChange(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 disabled:opacity-50 rounded-lg px-2.5 py-2 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            />
-          </div>
-
-          <div className="md:col-span-2 bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2">
-            <span className="text-[11px] text-slate-400 block">Rп пароиз.:</span>
-            <div className="text-sm font-bold font-mono text-cyan-400">
-              {previewVbRp.toFixed(3)}
-            </div>
-            <span className="text-[10px] text-slate-500 block">
-              ΣRп стены: {wall.total_R_p}
-            </span>
-          </div>
-        </div>
-
-        {/* Редактор пользовательской пароизоляции */}
-        {isCustomVb && (
-          <div className="bg-cyan-950/25 border border-cyan-500/40 rounded-xl p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold text-cyan-200">
-                Параметры своей пароизоляции (автоматически передаются в расчет, отчет и Excel)
-              </span>
-              <div className="inline-flex rounded-lg bg-slate-950 border border-slate-700 p-0.5 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => handleCustomVbFieldChange({ inputMode: 'rp' })}
-                  className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition ${
-                    (customVbParams.inputMode ?? 'rp') === 'rp'
-                      ? 'bg-cyan-600 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Задать Rп
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCustomVbFieldChange({ inputMode: 'mu' })}
-                  className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition ${
-                    customVbParams.inputMode === 'mu'
-                      ? 'bg-cyan-600 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Задать μ
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              <div className="col-span-2">
-                <label className="block text-[11px] text-slate-400 mb-1">Наименование материала</label>
-                <input
-                  aria-label="Наименование своей пароизоляции стены"
-                  type="text"
-                  value={customVbParams.name}
-                  onChange={(e) => handleCustomVbFieldChange({ name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-
-              {(customVbParams.inputMode ?? 'rp') === 'rp' ? (
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Rп, м²·ч·Па/мг</label>
-                  <input
-                    aria-label="Rп своей пароизоляции стены"
-                    type="number"
-                    step="0.1"
-                    min="0.01"
-                    value={customVbParams.R_p ?? 5.0}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ R_p: v });
-                    }}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">μ, мг/(м·ч·Па)</label>
-                  <input
-                    aria-label="μ своей пароизоляции стены"
-                    type="number"
-                    step="0.0001"
-                    min="0.00001"
-                    value={customVbParams.mu ?? 0.0002}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isNaN(v) && v > 0) handleCustomVbFieldChange({ mu: v });
-                    }}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">λ, Вт/(м·°C)</label>
-                <input
-                  aria-label="λ своей пароизоляции стены"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={customVbParams.lambda ?? 0.2}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!Number.isNaN(v) && v > 0) handleCustomVbFieldChange({ lambda: v });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">s, Вт/(м²·°C)</label>
-                <input
-                  aria-label="s своей пароизоляции стены"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={customVbParams.s ?? 3.5}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ s: v });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">ρ, кг/м³</label>
-                <input
-                  aria-label="ρ своей пароизоляции стены"
-                  type="number"
-                  step="50"
-                  min="0"
-                  value={customVbParams.density ?? 1000}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ density: v });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Подсказка о нормативном расположении */}
-        {selectedVbId !== 'none' && (
-          <div
-            className={`rounded-xl px-3.5 py-2.5 text-xs border ${
-              placementOpt.isNormative
-                ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-200'
-                : 'bg-amber-950/30 border-amber-700/60 text-amber-200'
-            }`}
-          >
-            <span className="font-semibold">
-              {placementOpt.isNormative ? '✓ Нормативное положение: ' : '⚠ Нестандартное положение: '}
-            </span>
-            <span>{placementOpt.note}</span>
-          </div>
-        )}
-      </div>
+      {/* Универсальный выбор и редактирование всех параметров пароизоляции наружной стены */}
+      <VaporBarrierEditor
+        title="Пароизоляция наружной стены (СП 2.04.01-2020 п. 10.6 — Приложение Н / свои параметры)"
+        subtitle="Выберите любой материал пароизоляции — сразу откроются все параметры (название, δ, Rп / μ, λ, s, ρ) для мгновенной корректировки"
+        config={cipher.overrides?.wallVaporBarrier}
+        applied={wall.vaporBarrier}
+        supportAuto={false}
+        totalRp={wall.total_R_p}
+        placements={WALL_VB_PLACEMENTS}
+        defaultPlacement="before_insulation"
+        accent="cyan"
+        testIdPrefix="wall"
+        onChange={(next) =>
+          onChangeCipher({
+            ...cipher,
+            overrides: {
+              ...cipher.overrides,
+              wallVaporBarrier: next,
+            },
+          })
+        }
+      />
 
       {/* Таблица слоев наружной стены */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
@@ -719,6 +390,38 @@ export const WallCalculator: React.FC<WallCalculatorProps> = ({
                 )
               </span>
             </div>
+          </div>
+
+          {/* Общее сопротивление R0 и тепловая инерция D */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              5. Сопротивление теплопередаче R₀ и тепловая инерция D:
+            </span>
+            <div className="text-blue-300">
+              R₀ = 1/αв + Σ(δᵢ/λᵢ) + 1/αн = 1/{alphaV} + {wallSumRLayers} + 1/{alphaN} ={' '}
+              <span className="font-bold text-white">{wall.R_total} м²·°С/Вт</span>
+            </div>
+            <div className="text-amber-300">
+              D = Σ(Rᵢ · sᵢ) = <span className="font-bold text-white">{wall.thermalInertia_D}</span>{' '}
+              <span className="text-slate-400 font-sans">({wall.designTempRule} → tн = {wall.design_t_out}°C)</span>
+            </div>
+          </div>
+
+          {/* Сопротивление паропроницанию Rп и упругость пара e(x) */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              6. Сопротивление паропроницанию Rп и парциальное давление e(x):
+            </span>
+            <div className="text-cyan-300">
+              Rп = 1/37 + Σ(δᵢ/μᵢ){wall.vaporBarrier ? ' + Rп.пи' : ''} + 1/77 = 0,027 + {wallSumRpLayers} + 0,013 ={' '}
+              <span className="font-bold text-white">{wall.total_R_p.toFixed(2)} м²·ч·Па/мг</span>
+            </div>
+            <div className="text-slate-300">
+              e(x) = eв − ((eв − eн.от) / Rп) · (1/37 + ΣRпi) = {internalConditions.e_v} − (({internalConditions.e_v} − {wallEout}) / {wall.total_R_p.toFixed(2)}) · ΣRп
+            </div>
+            <p className="text-[11px] text-slate-500 font-sans">
+              Где Rп.в = 1/37 = 0,027 и Rп.н = 1/77 = 0,013 м²·ч·Па/мг — сопротивления влагообмену у внутренней и наружной поверхностей (Шибеко, п. 7.1).
+            </p>
           </div>
         </div>
       </div>

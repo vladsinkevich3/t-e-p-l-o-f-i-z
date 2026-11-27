@@ -21,6 +21,7 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
   R_total,
   sectionBadge,
 }) => {
+  const showRp = points.some((p) => p.R_p_cumulative !== undefined);
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
@@ -79,6 +80,9 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
               <th className="py-2.5 px-2 text-right font-semibold">δ, мм</th>
               <th className="py-2.5 px-2 text-right font-semibold">R, м²·°С/Вт</th>
               <th className="py-2.5 px-2 text-right font-semibold">ΣR, м²·°С/Вт</th>
+              {showRp && (
+                <th className="py-2.5 px-2 text-right font-semibold text-cyan-400">ΣRп, м²·ч·Па/мг</th>
+              )}
               <th className="py-2.5 px-3 text-right font-semibold text-sky-400" title="Расчетная зимняя температура при tн (для τв и Δtв)">
                 <div>t_зима, °C</div>
                 <div className="text-[10px] font-normal text-sky-400/70">при tн = {t_n}°C</div>
@@ -169,6 +173,11 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
                   <td className="py-2 px-2 text-right font-medium text-slate-300">
                     {pt.R_cumulative.toFixed(3)}
                   </td>
+                  {showRp && (
+                    <td className="py-2 px-2 text-right font-medium text-cyan-300">
+                      {pt.R_p_cumulative !== undefined ? pt.R_p_cumulative.toFixed(3) : '—'}
+                    </td>
+                  )}
                   <td className="py-2 px-3 text-right font-bold">
                     <span 
                       className={`px-1.5 py-0.5 rounded text-xs ${
@@ -216,8 +225,9 @@ export const CrossSectionTable: React.FC<CrossSectionTableProps> = ({
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-blue-400 shrink-0" />
           <span>
-            Температура сечения: <code className="text-slate-300 font-mono">t_i = tв - (ΣR_j / Rт) · (tв - tн)</code>.
-            Запас по пару: <code className="text-slate-300 font-mono">Δ = E(t_от.пер) - e(x) &gt; 0</code> (отсутствие конденсации; строки «Воздух вн.» и «Воздух нар.» задают граничные условия).
+            Температура сечения: <code className="text-slate-300 font-mono">t_i = tв − (ΣR_j / Rт) · (tв − tн)</code>.{' '}
+            Парциальное давление: <code className="text-cyan-300 font-mono">e(x) = eв − (ΣRп_j / Rп) · (eв − eн)</code>.{' '}
+            Запас по пару: <code className="text-slate-300 font-mono">Δ = E(t_от.пер) − e(x) &gt; 0</code> (отсутствие конденсации; строки «Воздух вн.» и «Воздух нар.» задают граничные условия).
           </span>
         </div>
       </div>

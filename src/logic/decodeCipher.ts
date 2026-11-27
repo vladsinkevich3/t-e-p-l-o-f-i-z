@@ -9,6 +9,7 @@ import { BuildingTypeId, BUILDING_TYPES } from '../data/buildingTypes';
 import {
   WallVaporBarrierPlacement,
   RoofVaporBarrierPlacement,
+  BasementVaporBarrierPlacement,
   CustomVaporBarrierParams,
 } from '../data/vaporBarriers';
 
@@ -66,8 +67,8 @@ export interface WindowOverride {
 export interface VaporBarrierConfig {
   materialId: string; // ID из VAPOR_BARRIER_MATERIALS ('none' | 'pe_film_1' | ...) или 'custom'
   thicknessMm?: number; // Толщина в мм (если не задана — базовая для материала)
-  placement?: WallVaporBarrierPlacement | RoofVaporBarrierPlacement; // Положение пароизоляции (по умолч. по нормам СП 2.04.01: 'before_insulation')
-  custom?: CustomVaporBarrierParams; // Параметры пользовательской пароизоляции при materialId === 'custom'
+  placement?: WallVaporBarrierPlacement | RoofVaporBarrierPlacement | BasementVaporBarrierPlacement; // Положение пароизоляции (по умолч. по нормам СП 2.04.01: 'before_insulation')
+  custom?: CustomVaporBarrierParams; // Пользовательские/отредактированные параметры пароизоляции (поддерживаются для любого материала!)
 }
 
 export interface CalculationOverrides {
@@ -81,9 +82,10 @@ export interface CalculationOverrides {
   roofInsulationConductivity?: number;
   basementInsulationConductivity?: number;
 
-  // Выбираемая пароизоляция (материал + толщина, мм) для стены и покрытия/перекрытия
+  // Выбираемая пароизоляция (материал + толщина, мм + параметры) для стены, покрытия и перекрытия над техподпольем
   wallVaporBarrier?: VaporBarrierConfig;
   roofVaporBarrier?: VaporBarrierConfig;
+  basementVaporBarrier?: VaporBarrierConfig;
 
   // Тип местности для ветрового коэффициента k_i (Приложение М: 'A' | 'B' | 'C')
   windowTerrainType?: 'A' | 'B' | 'C';

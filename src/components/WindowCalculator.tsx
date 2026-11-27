@@ -398,6 +398,62 @@ export const WindowCalculator: React.FC<WindowCalculatorProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Формулы расчета светопрозрачных конструкций */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="border-b border-slate-800 pb-3">
+          <h3 className="text-base font-bold text-white">
+            Формулы теплотехнического и аэродинамического расчета окон (Шибеко, разд. 6)
+          </h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1.5">
+            <span className="text-slate-400 font-sans block font-semibold">
+              1. Приведенное сопротивление теплопередаче окна Rт.ок:
+            </span>
+            <div className="text-blue-300">
+              Rт.ок = Fок / Σ(Fᵢ / Rᵢ) = {Number(win.area_total.toFixed(4))} / {win.sum_F_over_R.toFixed(4)} ={' '}
+              <span className="font-bold text-white">{win.R_actual.toFixed(2)} м²·°С/Вт</span> ≥ {win.R_norm.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1.5">
+            <span className="text-slate-400 font-sans block font-semibold">
+              2. Высота здания H и плотности воздуха ρн, ρв:
+            </span>
+            <div className="text-blue-300">
+              H = 1,0 + 3,0·N + 2,7 = 3,7 + 3,0·{win.floors.length} = <span className="font-bold text-white">{win.H_building.toFixed(1)} м</span>
+            </div>
+            <div className="text-slate-300">
+              ρ = 353 / (273 + t) → ρн = <span className="text-white">{win.rho_n.toFixed(2)}</span>, ρв = <span className="text-white">{win.rho_v.toFixed(2)}</span> кг/м³
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1.5">
+            <span className="text-slate-400 font-sans block font-semibold">
+              3. Расчетная разность давлений Δpᵢ на этаже i (ф-ла 6.2):
+            </span>
+            <div className="text-blue-300">
+              Δpᵢ = (H − hᵢ)·g·(ρн − ρв) + 0,5·ρн·vср²·(cн − cп)·kᵢ
+            </div>
+            <div className="text-slate-400">
+              1-й этаж (h₁={win.floors[0]?.height} м, k₁={win.floors[0]?.k_i}): Δp₁ = <span className="text-white font-bold">{win.floors[0]?.delta_p.toFixed(2)} Па</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1.5">
+            <span className="text-slate-400 font-sans block font-semibold">
+              4. Требуемое сопротивление воздухопроницанию Rв.тр (ф-ла 6.1):
+            </span>
+            <div className="text-emerald-300">
+              Rв.тр = (1 / Gнорм) · (Δpᵢ / Δp₀)^(2/3), где Gнорм = {win.G_norm.toFixed(1)}, Δp₀ = 10 Па
+            </div>
+            <div className="text-slate-400">
+              1-й этаж: Rв.тр = <span className="text-emerald-400 font-bold">{win.floors[0]?.R_v_required.toFixed(3)} м²·ч/кг</span> (Класс {win.floors[0]?.windowClassRangeText})
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

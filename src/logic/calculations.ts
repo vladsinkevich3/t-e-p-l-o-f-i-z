@@ -38,7 +38,9 @@ import {
   resolveVaporBarrier,
   getWallPlacementOption,
   getRoofPlacementOption,
+  getBasementPlacementOption,
   RoofVaporBarrierPlacement,
+  BasementVaporBarrierPlacement,
 } from '../data/vaporBarriers';
 import { DecodedCipher, DEFAULT_CIPHER, VaporBarrierConfig } from './decodeCipher';
 import {
@@ -79,6 +81,7 @@ export interface CrossSectionTemperaturePoint {
   thickness_mm: number;
   R_layer: number;
   R_cumulative: number;
+  R_p_cumulative?: number;
   temp_winter: number; // tсеч при расчетной tн, °C
   temp_heating: number; // tсеч при tн.от, °C
   E_sat: number; // E(temp_heating), Па
@@ -316,6 +319,7 @@ export interface RoofCalculationResult {
     R_void_section: number; // сопротивление по пустоте плиты
   };
   layers: CalculatedLayer[];
+  R_without_insulation: number;
   delta_insulation_calc: number;
   delta_insulation_adopted: number;
   R_total: number;
@@ -330,6 +334,8 @@ export interface RoofCalculationResult {
   design_t_out: number;
   designTempRule: string; // правило выбора tн по табл. 6.3 СП 2.04.01-2020
   total_R_p: number;
+  total_R_p_void: number;
+  total_R_p_rib: number;
   needsVaporBarrier: boolean;
   vaporBarrierAdded: boolean;
   vaporBarrier: AppliedVaporBarrierInfo | null;
@@ -365,10 +371,13 @@ export interface BasementCalculationResult {
   construction: BasementConstructionDef;
   insulation: InsulationDef;
   layers: CalculatedLayer[];
+  R_without_insulation: number;
   delta_insulation_calc: number;
   delta_insulation_adopted: number;
   R_ptp: number;
   R_required: number;
+  total_R_p: number; // суммарное сопротивление паропроницанию перекрытия Rп (1/37 + ΣRпi + 1/77)
+  vaporBarrier: AppliedVaporBarrierInfo | null;
   pipeHeatGains_total: number; // Вт (суммарные тепловыделения от труб)
   pipesDetails: {
     temp: number;
@@ -379,6 +388,8 @@ export interface BasementCalculationResult {
   }[];
   crawlSpaceTemp_t_p: number; // температура воздуха в подполье, °C
   crawlSpaceRH: number; // влажность в подполье, %
+  E_p: number; // максимальная упругость пара в подполье E(tп), Па
+  e_p: number; // действительная упругость пара в подполье eп, Па
   delta_t_floor: number; // перепад на полу первого этажа
   delta_t_floor_norm: number; // 0.8 °C
   tau_v_floor: number;
@@ -1031,6 +1042,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: 0,
     R_cumulative: 0,
+    R_p_cumulative: 0,
     temp_winter: t_v,
     temp_heating: t_v,
     E_sat: getSaturatedVaporPressure(t_v),
@@ -1052,6 +1064,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: R_alpha_v_val,
     R_cumulative: R_alpha_v_val,
+    R_p_cumulative: +R_pv.toFixed(3),
     temp_winter: tau_v_w,
     temp_heating: tau_v_h,
     E_sat: E_tau_v,
@@ -1098,6 +1111,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         thickness_mm: Math.round(halfX_mm),
         R_layer: +halfR.toFixed(3),
         R_cumulative: +midCumR.toFixed(3),
+        R_p_cumulative: +midCumRp.toFixed(3),
         temp_winter: t_w_mid,
         temp_heating: t_h_mid,
         E_sat: E_h_mid,
@@ -1136,6 +1150,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       thickness_mm: formattedThkMm,
       R_layer: layer.R,
       R_cumulative: +cumWallR.toFixed(3),
+      R_p_cumulative: +cumWallRp.toFixed(3),
       temp_winter: t_w,
       temp_heating: t_h,
       E_sat: E_h,
@@ -1154,6 +1169,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: +(1 / alpha_n_ext).toFixed(4),
     R_cumulative: +R_wall_total_exact.toFixed(3),
+    R_p_cumulative: +total_R_p_wall_exact.toFixed(3),
     temp_winter: t_n_design,
     temp_heating: t_n_moisture,
     E_sat: getSaturatedVaporPressure(t_n_moisture),
@@ -2014,6 +2030,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       thickness_mm: 0,
       R_layer: 0,
       R_cumulative: 0,
+      R_p_cumulative: 0,
       temp_winter: t_v,
       temp_heating: t_v,
       E_sat: getSaturatedVaporPressure(t_v),
@@ -2032,6 +2049,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       thickness_mm: 0,
       R_layer: R_alpha_v,
       R_cumulative: R_alpha_v,
+      R_p_cumulative: +R_pv.toFixed(3),
       temp_winter: tau_v_sec_steady,
       temp_heating: tau_v_sec_heat,
       E_sat: E_tau_v,
@@ -2086,6 +2104,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
           thickness_mm: Math.round(halfX_mm),
           R_layer: +halfR.toFixed(3),
           R_cumulative: +midCumR.toFixed(3),
+          R_p_cumulative: +midCumRp.toFixed(3),
           temp_winter: t_w_mid,
           temp_heating: t_h_mid,
           E_sat: E_h_mid,
@@ -2133,6 +2152,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         thickness_mm: formattedThkMm,
         R_layer: layer.R,
         R_cumulative: +cumR.toFixed(3),
+        R_p_cumulative: +cumRp.toFixed(3),
         temp_winter: t_w,
         temp_heating: t_h,
         E_sat: E_h,
@@ -2159,6 +2179,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       thickness_mm: 0,
       R_layer: R_alpha_n,
       R_cumulative: +R_total_sec_exact.toFixed(3),
+      R_p_cumulative: +total_Rp_sec_exact.toFixed(3),
       temp_winter: t_n_sec,
       temp_heating: t_n_moisture,
       E_sat: getSaturatedVaporPressure(t_n_moisture),
@@ -2293,9 +2314,18 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     (roofVaporBarrierInfo?.placement as RoofVaporBarrierPlacement) || 'before_insulation';
 
   // Расчет слоев для сводной таблицы покрытия (без дублирования плиты, с учетом расположения пароизоляции!)
+  const roofVbRExact = chosenVbLayer ? chosenVbLayer.thickness / chosenVbLayer.lambda : 0;
+  const R_roof_total_with_vb = +(R_roof_total_exact + roofVbRExact).toFixed(2);
+  const hollowSlabRpForTable =
+    activeSectionType === 'void'
+      ? +((2 * delta_flange_actual) / 0.03).toFixed(3)
+      : +(h_m / 0.03).toFixed(3);
   const hollowSlabSummaryLayer: CalculatedLayer = {
     name: `Многопустотная ж/б плита h=${slabH}мм`,
-    materialName: 'Железобетон с пустотами d=' + slabVoidD + 'мм',
+    materialName:
+      activeSectionType === 'void'
+        ? `Железобетон с пустотами d=${slabVoidD}мм (по пустоте: 2 полки по ${Math.round(delta_flange_actual * 1000)} мм, Rп.возд=0)`
+        : `Железобетон с пустотами d=${slabVoidD}мм (по ребру h=${slabH} мм)`,
     density: 2500,
     thickness: h_m,
     lambda: +(h_m / R_slab).toFixed(3),
@@ -2303,7 +2333,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     s: concreteS,
     D: +(R_slab * concreteS).toFixed(2),
     mu: 0.03,
-    R_p: +(h_m / 0.03).toFixed(2),
+    R_p: hollowSlabRpForTable,
     tempInside: 0,
     tempOutside: 0,
     E_inside: 0,
@@ -2319,7 +2349,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
 
   const delta_t_norm_roof = ov.delta_t_norm_roof ?? bTypeDef.delta_t_norm_roof;
   const R_roof_norm_latest_req = +(bTypeDef.R_norm_roof * n_roof).toFixed(2);
-  const roofRCompliant = R_roof_total >= R_roof_req && R_roof_total >= R_roof_norm_latest_req;
+  const roofRCompliant = R_roof_total_with_vb >= R_roof_req && R_roof_total_with_vb >= R_roof_norm_latest_req;
 
   // Гарантируем наличие защищенного варианта (с пароизоляцией) для отчета, даже если пароизоляция была отключена вручную
   let protectedWorstSection = worstSectionData;
@@ -2380,9 +2410,10 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       R_void_section,
     },
     layers: roofLayersCalculated,
+    R_without_insulation: +R_roof_without_ins.toFixed(3),
     delta_insulation_calc: +delta_roof_ins_calc.toFixed(3),
     delta_insulation_adopted: delta_roof_ins_adopted,
-    R_total: R_roof_total,
+    R_total: R_roof_total_with_vb,
     R_required: R_roof_req,
     R_norm_latest: bTypeDef.R_norm_roof,
     thermalInertia_D: D_roof,
@@ -2394,6 +2425,8 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     design_t_out: t_n_roof,
     designTempRule: roofDesignTempInfo.ruleLabel,
     total_R_p: activeSection.total_Rp,
+    total_R_p_void: voidSectionData.total_Rp,
+    total_R_p_rib: worstSectionData.total_Rp,
     needsVaporBarrier,
     vaporBarrierAdded,
     vaporBarrier: roofVaporBarrierInfo,
@@ -2511,12 +2544,61 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       : customBaseInsLayer && customBaseInsLayer.thickness > 0
       ? customBaseInsLayer.thickness
       : +(Math.max(0.05, Math.ceil(delta_base_ins_calc * 100) / 100)).toFixed(2);
-  const R_ptp_total = +(R_ptp_without_ins + delta_base_ins_adopted / baseInsLambda).toFixed(2);
+  // Пароизоляция перекрытия над техподпольем (опциональная, с редактированием всех параметров)
+  let baseVaporBarrierLayer: CalculatedLayer | null = null;
+  let baseVaporBarrierInfo: AppliedVaporBarrierInfo | null = null;
+  let baseVbRExact = 0;
+  let baseVbRpExact = 0;
+  const baseVbPlacementOpt = getBasementPlacementOption(ov.basementVaporBarrier?.placement);
+  const resolvedBaseVb = resolveVaporBarrier(ov.basementVaporBarrier);
+  if (resolvedBaseVb) {
+    const thkM = resolvedBaseVb.thicknessMm / 1000;
+    baseVbRExact = thkM / resolvedBaseVb.lambda;
+    baseVbRpExact = resolvedBaseVb.R_p;
+    baseVaporBarrierLayer = {
+      name: `Пароизоляция (${resolvedBaseVb.shortName}, δ=${resolvedBaseVb.thicknessMm} мм, Rп=${resolvedBaseVb.R_p})`,
+      materialName: resolvedBaseVb.name,
+      density: resolvedBaseVb.density,
+      thickness: thkM,
+      lambda: resolvedBaseVb.lambda,
+      R: +baseVbRExact.toFixed(4),
+      s: resolvedBaseVb.s,
+      D: +(baseVbRExact * resolvedBaseVb.s).toFixed(3),
+      mu: resolvedBaseVb.mu,
+      R_p: resolvedBaseVb.R_p,
+      tempInside: 0,
+      tempOutside: 0,
+      E_inside: 0,
+      E_outside: 0,
+      e_inside: 0,
+      e_outside: 0,
+      isVaporBarrier: true,
+    };
+    baseVaporBarrierInfo = {
+      materialId: resolvedBaseVb.materialId,
+      name: resolvedBaseVb.name,
+      shortName: resolvedBaseVb.shortName,
+      thicknessMm: resolvedBaseVb.thicknessMm,
+      R_p: resolvedBaseVb.R_p,
+      mu: resolvedBaseVb.mu,
+      lambda: resolvedBaseVb.lambda,
+      s: resolvedBaseVb.s,
+      density: resolvedBaseVb.density,
+      placement: baseVbPlacementOpt.id,
+      placementLabel: baseVbPlacementOpt.label,
+      isNormativePlacement: baseVbPlacementOpt.isNormative,
+      isAuto: false,
+      isCustom: resolvedBaseVb.isCustom,
+    };
+  }
+
+  const R_ptp_total = +(R_ptp_without_ins + delta_base_ins_adopted / baseInsLambda + baseVbRExact).toFixed(2);
 
   // Тепловой баланс подполья
   const t_p_crawl_space = ov.crawlSpacePipes?.crawlSpaceTempOverride ?? 8.7;
   const phi_p_crawl_space = ov.crawlSpacePipes?.crawlSpaceRHOverride ?? 75;
-  const e_p_exact = (phi_p_crawl_space / 100) * getSaturatedVaporPressure(t_p_crawl_space);
+  const E_p = getSaturatedVaporPressure(t_p_crawl_space);
+  const e_p_exact = (phi_p_crawl_space / 100) * E_p;
   const e_p = +e_p_exact.toFixed(2);
   const dew_point_basement = getDewPoint(e_p_exact);
 
@@ -2531,19 +2613,45 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
 
   const baseLayersExactR: number[] = [];
   const baseLayersExactRp: number[] = [];
-  const baseLayersCalculated: CalculatedLayer[] = baseLayersConfig.map((l) => {
-    const isIns = l.isInsulation || l.materialId === 'insulation';
+  const baseLayersIsIns: boolean[] = [];
+  const baseLayersCalculated: CalculatedLayer[] = [];
+
+  const insIdxBase = baseLayersConfig.findIndex((l) => l.isInsulation || l.materialId === 'insulation');
+  let baseVbInsertIndex = insIdxBase >= 0 ? insIdxBase : 0;
+  const baseVbPlacementId: BasementVaporBarrierPlacement = baseVbPlacementOpt.id;
+  if (baseVbPlacementId === 'inner_surface') {
+    baseVbInsertIndex = 0;
+  } else if (baseVbPlacementId === 'after_layer_1') {
+    baseVbInsertIndex = Math.min(1, baseLayersConfig.length);
+  } else if (baseVbPlacementId === 'after_insulation') {
+    baseVbInsertIndex = insIdxBase >= 0 ? insIdxBase + 1 : baseLayersConfig.length;
+  }
+
+  const pushBaseVb = () => {
+    if (!baseVaporBarrierLayer) return;
+    baseLayersCalculated.push(baseVaporBarrierLayer);
+    baseLayersExactR.push(baseVbRExact);
+    baseLayersExactRp.push(baseVbRpExact);
+    baseLayersIsIns.push(false);
+  };
+
+  baseLayersConfig.forEach((l, idx) => {
+    if (baseVaporBarrierLayer && idx === baseVbInsertIndex) {
+      pushBaseVb();
+    }
+    const isIns = Boolean(l.isInsulation || l.materialId === 'insulation');
     const d = isIns ? delta_base_ins_adopted : l.thickness;
     const baseMat = getMaterialData(l.materialId, isIns);
     const lambda = l.customLambda ?? baseMat.lambda;
     const s = l.customS ?? baseMat.s;
     const mu = l.customMu ?? baseMat.mu;
     const rExact = d / lambda;
-    const rpExact = d / mu;
+    const rpExact = mu > 0 ? d / mu : 0;
     baseLayersExactR.push(rExact);
     baseLayersExactRp.push(rpExact);
+    baseLayersIsIns.push(isIns);
     const r = +rExact.toFixed(4);
-    return {
+    baseLayersCalculated.push({
       name: l.name,
       materialName: isIns ? insDef.name : baseMat.name,
       thickness: d,
@@ -2559,8 +2667,11 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
       E_outside: 0,
       e_inside: 0,
       e_outside: 0,
-    };
+    });
   });
+  if (baseVaporBarrierLayer && baseVbInsertIndex >= baseLayersConfig.length) {
+    pushBaseVb();
+  }
 
   // Расчет температурного профиля и влажности перекрытия над техподпольем (точные некругленные R)
   const basementCrossSection: CrossSectionTemperaturePoint[] = [];
@@ -2581,6 +2692,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     R_alpha_v_base_exact + baseLayersExactR.reduce((s, r) => s + r, 0) + R_alpha_n_base_exact;
   const total_Rp_base_exact =
     R_pv + baseLayersExactRp.reduce((s, rp) => s + rp, 0) + R_pn;
+  const total_R_p_base = +total_Rp_base_exact.toFixed(2);
 
   const q_base_heat = (t_v - t_p_crawl_space) / total_R_base_exact;
 
@@ -2593,6 +2705,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: 0,
     R_cumulative: 0,
+    R_p_cumulative: 0,
     temp_winter: t_v,
     temp_heating: t_v,
     E_sat: getSaturatedVaporPressure(t_v),
@@ -2613,6 +2726,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: R_alpha_v_base,
     R_cumulative: R_alpha_v_base,
+    R_p_cumulative: +R_pv.toFixed(3),
     temp_winter: tau_floor,
     temp_heating: tau_floor,
     E_sat: E_tau_floor,
@@ -2637,7 +2751,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const rExact = baseLayersExactR[idx];
     const rpExact = baseLayersExactRp[idx];
     const isLastLayer = idx === baseLayersCalculated.length - 1;
-    const isIns = layer.name.toLowerCase().includes('утепл') || layer.materialName.toLowerCase().includes('плиты');
+    const isIns = Boolean(baseLayersIsIns[idx]);
 
     // Контрольная точка в середине утеплителя пола
     if (isIns) {
@@ -2661,6 +2775,7 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
         thickness_mm: Math.round(halfX_mm),
         R_layer: +halfR.toFixed(3),
         R_cumulative: +midCumR.toFixed(3),
+        R_p_cumulative: +midCumRp.toFixed(3),
         temp_winter: t_mid,
         temp_heating: t_mid,
         E_sat: E_mid,
@@ -2688,19 +2803,32 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     const E_val = getSaturatedVaporPressure(t_val_exact);
     const e_val = +(e_v_exact - ((e_v_exact - e_p_exact) / total_Rp_base_exact) * cumBaseRp).toFixed(2);
 
+    const thkMmVal = layer.thickness * 1000;
+    const formattedThkMm = thkMmVal < 10 ? +thkMmVal.toFixed(2) : Math.round(thkMmVal);
+    const formattedCoordX =
+      Math.abs(cumBaseX_mm - Math.round(cumBaseX_mm)) < 0.001
+        ? Math.round(cumBaseX_mm)
+        : +cumBaseX_mm.toFixed(2);
+
     basementCrossSection.push({
       index: basePtIndex++,
-      planeName: isLastLayer ? `Потолок подполья τн (${layer.name})` : `Граница: ${layer.name}`,
+      planeName: isLastLayer
+        ? `Потолок подполья τн (${layer.name})`
+        : layer.isVaporBarrier
+        ? `Граница пароизоляции: ${layer.name}`
+        : `Граница: ${layer.name}`,
       layerName: layer.name,
-      coord_x_mm: Math.round(cumBaseX_mm),
-      thickness_mm: Math.round(layer.thickness * 1000),
+      coord_x_mm: formattedCoordX,
+      thickness_mm: formattedThkMm,
       R_layer: layer.R,
       R_cumulative: +cumBaseR.toFixed(3),
+      R_p_cumulative: +cumBaseRp.toFixed(3),
       temp_winter: t_val,
       temp_heating: t_val,
       E_sat: E_val,
       e_partial: e_val,
       delta_margin: +(E_val - e_val).toFixed(1),
+      isVaporBarrier: Boolean(layer.isVaporBarrier),
     });
 
     basementMoisturePoints.push({
@@ -2721,11 +2849,12 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     thickness_mm: 0,
     R_layer: R_alpha_n_base,
     R_cumulative: +total_R_base_exact.toFixed(3),
+    R_p_cumulative: +total_Rp_base_exact.toFixed(3),
     temp_winter: t_p_crawl_space,
     temp_heating: t_p_crawl_space,
-    E_sat: getSaturatedVaporPressure(t_p_crawl_space),
+    E_sat: E_p,
     e_partial: e_p,
-    delta_margin: +(getSaturatedVaporPressure(t_p_crawl_space) - e_p).toFixed(1),
+    delta_margin: +(E_p - e_p).toFixed(1),
   });
 
   const baseMoistureRisk = basementMoisturePoints.some((p) => p.e >= p.E);
@@ -2736,14 +2865,19 @@ export function calculateCoursework(inputCipher: DecodedCipher | Partial<Decoded
     construction: baseDef,
     insulation: insDef,
     layers: baseLayersCalculated,
+    R_without_insulation: +R_ptp_without_ins.toFixed(3),
     delta_insulation_calc: +delta_base_ins_calc.toFixed(3),
     delta_insulation_adopted: delta_base_ins_adopted,
     R_ptp: R_ptp_total,
     R_required: R_ptp_min,
+    total_R_p: total_R_p_base,
+    vaporBarrier: baseVaporBarrierInfo,
     pipeHeatGains_total: totalPipeHeatWatts,
     pipesDetails,
     crawlSpaceTemp_t_p: t_p_crawl_space,
     crawlSpaceRH: phi_p_crawl_space,
+    E_p,
+    e_p,
     delta_t_floor,
     delta_t_floor_norm,
     tau_v_floor,

@@ -267,7 +267,7 @@ function excelWindowClassLetter(rvRef: string): string {
 function excelWindowClassRange(minRef: string, maxRef: string): string {
   const cHigh = excelWindowClassLetter(maxRef);
   const cLow = excelWindowClassLetter(minRef);
-  const f = (expr: string) => `TEXT(${expr},"0.000")`;
+  const f = (expr: string) => `ROUND(${expr},3)`;
   // Граничные переходы: между А/Б = 1.279, Б/В = 0.426, В/Г = 0.226, Г/Д = 0.142
   return (
     `IF(${cHigh}=${cLow},${cHigh},` +
@@ -443,15 +443,20 @@ export async function buildCourseworkWorkbook(
     ['Своя пароизоляция 3 (задайте параметры)', 'custom_3', 2.0, 8.0, 0.17, 4.5, 1200, 'Редактируемый слот (рулонная / многослойная своя пароизоляция)'],
   ];
 
+  const catalogVbNames = new Set(VAPOR_BARRIER_MATERIALS.map((m) => m.name));
+  const ensureUniqueCustomVbName = (rawName: string, suffix: string): string =>
+    catalogVbNames.has(rawName) ? `${rawName} (${suffix})` : rawName;
+
   let wallCustomSlotName: string | null = null;
   let roofCustomSlotName: string | null = null;
+  let nextFreeCustomSlot = 0;
 
   if (calc.wall.vaporBarrier?.isCustom) {
     const wbVb = calc.wall.vaporBarrier;
-    wallCustomSlotName = wbVb.name;
-    customVbSlots[0] = [
-      wbVb.name,
-      'custom_1',
+    wallCustomSlotName = ensureUniqueCustomVbName(wbVb.name, 'изм. стена');
+    customVbSlots[nextFreeCustomSlot] = [
+      wallCustomSlotName,
+      `custom_${nextFreeCustomSlot + 1}`,
       wbVb.thicknessMm,
       wbVb.R_p,
       wbVb.lambda ?? 0.2,
@@ -459,17 +464,25 @@ export async function buildCourseworkWorkbook(
       wbVb.density ?? 950,
       'Задана пользователем для наружной стены (можно редактировать прямо в Excel)',
     ];
+    nextFreeCustomSlot++;
   }
   if (calc.roof.vaporBarrier?.isCustom) {
     const rfVb = calc.roof.vaporBarrier;
-    if (wallCustomSlotName && wallCustomSlotName === rfVb.name) {
+    const candidateName = ensureUniqueCustomVbName(rfVb.name, 'изм. покр.');
+    if (
+      wallCustomSlotName &&
+      calc.wall.vaporBarrier &&
+      rfVb.name === calc.wall.vaporBarrier.name &&
+      rfVb.thicknessMm === calc.wall.vaporBarrier.thicknessMm &&
+      Math.abs(rfVb.R_p - calc.wall.vaporBarrier.R_p) < 1e-6
+    ) {
       roofCustomSlotName = wallCustomSlotName;
     } else {
-      const slotIdx = wallCustomSlotName ? 1 : 0;
-      roofCustomSlotName = rfVb.name;
-      customVbSlots[slotIdx] = [
-        rfVb.name,
-        slotIdx === 0 ? 'custom_1' : 'custom_2',
+      roofCustomSlotName =
+        candidateName === wallCustomSlotName ? `${candidateName} (покр.)` : candidateName;
+      customVbSlots[nextFreeCustomSlot] = [
+        roofCustomSlotName,
+        `custom_${nextFreeCustomSlot + 1}`,
         rfVb.thicknessMm,
         rfVb.R_p,
         rfVb.lambda ?? 0.2,
@@ -477,7 +490,22 @@ export async function buildCourseworkWorkbook(
         rfVb.density ?? 950,
         'Задана пользователем для покрытия (можно редактировать прямо в Excel)',
       ];
+      nextFreeCustomSlot++;
     }
+  }
+  if (calc.basement.vaporBarrier?.isCustom && nextFreeCustomSlot < customVbSlots.length) {
+    const bsVb = calc.basement.vaporBarrier;
+    const baseName = ensureUniqueCustomVbName(bsVb.name, 'изм. ПТП');
+    customVbSlots[nextFreeCustomSlot] = [
+      baseName,
+      `custom_${nextFreeCustomSlot + 1}`,
+      bsVb.thicknessMm,
+      bsVb.R_p,
+      bsVb.lambda ?? 0.2,
+      bsVb.s ?? 4.0,
+      bsVb.density ?? 950,
+      'Задана пользователем для перекрытия ПТП (можно редактировать прямо в Excel)',
+    ];
   }
 
   customVbSlots.forEach((slotVals, idx) => {
@@ -802,7 +830,7 @@ export async function buildCourseworkWorkbook(
     ['Пароизоляция покрытия: R_п.покр = Rп.баз·(δ/δбаз)', `IF(F20<=0,0,ROUND(INDEX(${vbRpRng},MATCH($C$19,${vbNameRng},0))*(F20/INDEX(${vbThkRng},MATCH($C$19,${vbNameRng},0))),3))`, '0.000', 'м²·ч·Па/мг'],
     ['Температура наиболее холодных 3 суток (0.92)', 'ROUND((F9+F11)/2,1)', '0.0', '°C (0.5·(t_х.с+t_х.5))'],
     ['Расчетная зимняя t_н стены (по D стены)', "'Стена_Расчет'!C18", '0.0', '°C (табл. 6.3 СП 2.04.01)'],
-    ['Расчетная зимняя t_н покрытия (по D покр.)', "'Покрытие_Расчет'!C25", '0.0', '°C (табл. 6.3 СП 2.04.01)'],
+    ['Расчетная зимняя t_н покрытия (по D покр.)', "'Покрытие_Расчет'!C22", '0.0', '°C (табл. 6.3 СП 2.04.01)'],
   ];
 
   climateFormulas.forEach(([label, formula, fmt, unit], idx) => {
@@ -905,20 +933,20 @@ export async function buildCourseworkWorkbook(
     [
       'Покрытие / чердак (лист «Покрытие_Расчет»)',
       '$C$9',
-      "'Покрытие_Расчет'!C21*1000",
-      "'Покрытие_Расчет'!C22",
+      "'Покрытие_Расчет'!C18*1000",
       "'Покрытие_Расчет'!C19",
+      "'Покрытие_Расчет'!C16",
+      "'Покрытие_Расчет'!C23",
       "'Покрытие_Расчет'!C26",
-      "'Покрытие_Расчет'!C28",
     ],
     [
       'Перекрытие техподполья (лист «Подполье_ПТП»)',
       '$C$10',
-      "'Подполье_ПТП'!C13*1000",
-      "'Подполье_ПТП'!C14",
-      "'Подполье_ПТП'!C11",
-      "'Подполье_ПТП'!C19",
+      "'Подполье_ПТП'!C15*1000",
+      "'Подполье_ПТП'!C16",
+      "'Подполье_ПТП'!C13",
       "'Подполье_ПТП'!C22",
+      "'Подполье_ПТП'!C25",
     ],
     [
       'Оконный блок (лист «Окна_Расчет»)',
@@ -1200,7 +1228,8 @@ export async function buildCourseworkWorkbook(
   styleFormulaCell(wsWallMain.getCell('H16'), '0.0', true, true);
   wsWallMain.mergeCells('I16:K16');
   wsWallMain.getCell('I16').value = {
-    formula: '"Па (e_в = "&TEXT(\'Ввод_и_Итоги\'!$C$29,"0.00")&" Па при φ_в="&\'Ввод_и_Итоги\'!$C$27&"%)"',
+    formula: '"Па (e_в = "&ROUND(\'Ввод_и_Итоги\'!$C$29,2)&" Па при φ_в="&\'Ввод_и_Итоги\'!$C$27&"%)"',
+    result: `Па (e_в = ${calc.internalConditions.e_v.toFixed(2).replace('.', ',')} Па при φ_в=${calc.internalConditions.phi_v}%)`,
   };
   styleLabelCell(wsWallMain.getCell('I16'));
 
@@ -1338,7 +1367,7 @@ export async function buildCourseworkWorkbook(
     wallFokinRows.push({
       row: curWRow++,
       idx: `ПИ.${s}`,
-      nameF: `IF(AND($J$12>0,$H$20=${s}),"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$17&" (δ="&TEXT('Ввод_и_Итоги'!$F$18,"0.00")&" мм)","(позиция ПИ не здесь — пропуск)")`,
+      nameF: `IF(AND($J$12>0,$H$20=${s}),"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$17&" (δ="&ROUND('Ввод_и_Итоги'!$F$18,2)&" мм)","(позиция ПИ не здесь — пропуск)")`,
       xF: `IF(AND($J$12>0,$H$20=${s}),ROUND(${prevX}+$D$12*1000,1),"")`,
       rCumF: `IF(AND($J$12>0,$H$20=${s}),${prevR}+$F$12,"")`,
       rpCumF: `IF(AND($J$12>0,$H$20=${s}),${prevRp}+$J$12,"")`,
@@ -1371,7 +1400,7 @@ export async function buildCourseworkWorkbook(
   wallFokinRows.push({
     row: curWRow++, // 44
     idx: 'ПИ.5',
-    nameF: `IF(AND($J$12>0,$H$20>=5),"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$17&" (δ="&TEXT('Ввод_и_Итоги'!$F$18,"0.00")&" мм)","(позиция ПИ не здесь — пропуск)")`,
+    nameF: `IF(AND($J$12>0,$H$20>=5),"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$17&" (δ="&ROUND('Ввод_и_Итоги'!$F$18,2)&" мм)","(позиция ПИ не здесь — пропуск)")`,
     xF: `IF(AND($J$12>0,$H$20>=5),ROUND(SUM($D$7:$D$12)*1000,1),"")`,
     rCumF: `IF(AND($J$12>0,$H$20>=5),1/'Ввод_и_Итоги'!$C$34+SUM($F$7:$F$12),"")`,
     rpCumF: `IF(AND($J$12>0,$H$20>=5),1/37+SUM($J$7:$J$12),"")`,
@@ -1538,15 +1567,16 @@ export async function buildCourseworkWorkbook(
     wsRoofMain,
     'A1:L2',
     'РАСЧЕТ ПОКРЫТИЯ / ЧЕРДАЧНОГО ПЕРЕКРЫТИЯ (МНОГОПУСТОТНАЯ Ж/Б ПЛИТА П1–П30)',
-    'Точный расчет плиты (a, b1, δп, R1, R2, Rпл), выбираемая пароизоляция (материал и толщина), R_п.возд = 0 по СП 2.04.01 п. 10.5 и интерполяция E(t) по табл. Е.1'
+    'Структура аналогична «Стена_Расчет»: полная таблица всех слоев (вкл. ж/б плиту, утеплитель и пароизоляцию), точный расчет R_п по пустоте (R_п.возд = 0) и по ребру, интерполяция E(t) по табл. Е.1'
   );
   wsRoofMain.columns = [
-    { width: 6 }, { width: 36 }, { width: 15 }, { width: 11 },
+    { width: 6 }, { width: 38 }, { width: 15 }, { width: 11 },
     { width: 11 }, { width: 11 }, { width: 11 }, { width: 11 },
     { width: 11 }, { width: 11 }, { width: 20 }, { width: 8 },
   ];
 
-  styleSectionRow(wsRoofMain, 4, 12, '1. ПАРАМЕТРЫ МНОГОПУСТОТНОЙ Ж/Б ПЛИТЫ И СОСТАВ СЛОЕВ');
+  // Блок 1: Полная таблица слоев покрытия (идентично «Стена_Расчет», 11 столбцов A..K)
+  styleSectionRow(wsRoofMain, 4, 12, '1. КОНСТРУКЦИЯ ПОКРЫТИЯ И ХАРАКТЕРИСТИКИ ВСЕХ СЛОЕВ (СВЯЗАНО С «Ввод_и_Итоги»)');
   wsRoofMain.mergeCells('A5:B5');
   wsRoofMain.getCell('A5').value = 'Шифр покрытия:';
   styleLabelCell(wsRoofMain.getCell('A5'), true);
@@ -1567,148 +1597,173 @@ export async function buildCourseworkWorkbook(
   wsRoofMain.getCell('K5').value = { formula: '"Условия "&\'Ввод_и_Итоги\'!$C$33' };
   styleFormulaCell(wsRoofMain.getCell('K5'), '@', true);
 
-  const slabCalcRows: [number, string, string, string, string][] = [
-    [6, 'Высота многопустотной плиты h, м', `INDEX('Справ_Конструкции'!$E$${roofStartRow}:$E$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`, '0.000', 'м'],
-    [7, 'Диаметр круглой пустоты d, м', `INDEX('Справ_Конструкции'!$F$${roofStartRow}:$F$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`, '0.000', 'м'],
-    [8, 'Шаг пустот b_шаг, м', `INDEX('Справ_Конструкции'!$G$${roofStartRow}:$G$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`, '0.000', 'м'],
-    [9, 'Теплопроводность железобетона λ_б (А=1.92 / Б=2.04)', `IF('Ввод_и_Итоги'!$C$33="А",1.92,2.04)`, '0.00', 'Вт/(м·°C)'],
-    [10, 'Сторона эквивалентного квадрата пустоты a = √(π·d²/4)', 'ROUND(SQRT(PI()*C7^2/4),4)', '0.0000', 'м'],
-    [11, 'Ширина бетонного ребра b_1 = b_шаг - a', 'ROUND(C8-C10,4)', '0.0000', 'м'],
-    [12, 'Приведенная толщина полки δ_п = (h - a)/2', 'ROUND((C6-C10)/2,4)', '0.0000', 'м'],
-    [13, 'Термическое сопротивление по ребру R_1 = h / λ_б (худшее сечение)', 'C6/C9', '0.0000', 'м²·°C/Вт'],
-    [14, 'Термическое сопротивление по пустоте R_2 = 2·δ_п/λ_б + 0.15', '(2*C12)/C9+0.15', '0.0000', 'м²·°C/Вт'],
-    [15, 'Приведенное термическое сопротивление плиты R_пл', 'ROUND((C11+C10)/(C11/C13+C10/C14),3)', '0.000', 'м²·°C/Вт'],
-  ];
-  slabCalcRows.forEach(([r, lbl, formula, fmt, unit]) => {
+  styleTableHeader(wsRoofMain, 6, [
+    '№', 'Наименование слоя (изнутри → наружу)', 'Код мат.', 'δ, м',
+    'λ, Вт/(м·°C)', 'R_i, м²·°C/Вт', 's_i, Вт/(м²·°C)', 'D_i = R·s',
+    'μ, мг/(м·ч·Па)', 'R_п.i', 'Тип слоя',
+  ]);
+
+  // Помощник для заполнения конструктивного слоя покрытия (Внутр1, Внутр2, Нар1, Нар2) в формате «Стена_Расчет»
+  const writeRoofLookupLayerRow = (
+    r: number,
+    numLabel: number,
+    cN: string,
+    cM: string,
+    cD: string,
+    roleLabel: string
+  ) => {
     wsRoofMain.getRow(r).height = 20;
-    wsRoofMain.mergeCells(`A${r}:B${r}`);
-    wsRoofMain.getCell(`A${r}`).value = lbl;
-    styleLabelCell(wsRoofMain.getCell(`A${r}`), r === 15);
-    wsRoofMain.getCell(`C${r}`).value = { formula };
-    styleFormulaCell(wsRoofMain.getCell(`C${r}`), fmt, r === 15, r === 15);
-    wsRoofMain.getCell(`D${r}`).value = unit;
-    styleLabelCell(wsRoofMain.getCell(`D${r}`));
-  });
-
-  // Справа E6:K15 — слои покрытия + выбранная пароизоляция с листа Ввод_и_Итоги
-  wsRoofMain.mergeCells('E6:K6');
-  wsRoofMain.getCell('E6').value = 'СЛОИ ПОКРЫТИЯ И ПАРОИЗОЛЯЦИЯ (СВЯЗАНО С «Ввод_и_Итоги»)';
-  wsRoofMain.getCell('E6').font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-  wsRoofMain.getCell('E6').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.slateSubHeader } };
-  wsRoofMain.getCell('E6').alignment = { vertical: 'middle', horizontal: 'center' };
-
-  const roofLayerHeaders = ['Слой', 'Мат.ID', 'δ, м', 'λ', 'R_i', 's_i', 'R_п.i'];
-  roofLayerHeaders.forEach((h, i) => {
-    const c = wsRoofMain.getCell(7, 5 + i);
-    c.value = h;
-    c.font = { name: 'Calibri', size: 9, bold: true };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.sectionBg } };
-    c.alignment = { vertical: 'middle', horizontal: 'center' };
-    c.border = THIN_BORDER;
-  });
-
-  const roofExtraCols: [string, string, string][] = [
-    ['H', 'I', 'J'],
-    ['K', 'L', 'M'],
-    ['N', 'O', 'P'],
-    ['Q', 'R', 'S'],
-  ];
-  roofExtraCols.forEach(([cN, cM, cD], idx) => {
-    const r = 8 + idx; // 8..11
     const fName = `INDEX('Справ_Конструкции'!$${cN}$${roofStartRow}:$${cN}$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))`;
     const fMat = `INDEX('Справ_Конструкции'!$${cM}$${roofStartRow}:$${cM}$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))`;
     const fThk = `INDEX('Справ_Конструкции'!$${cD}$${roofStartRow}:$${cD}$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))`;
-    wsRoofMain.getCell(`E${r}`).value = { formula: fName };
-    styleLabelCell(wsRoofMain.getCell(`E${r}`));
-    wsRoofMain.getCell(`F${r}`).value = { formula: fMat };
-    styleFormulaCell(wsRoofMain.getCell(`F${r}`), '@');
-    wsRoofMain.getCell(`G${r}`).value = { formula: fThk };
-    styleFormulaCell(wsRoofMain.getCell(`G${r}`), '0.000');
-    wsRoofMain.getCell(`H${r}`).value = {
-      formula: `IF(F${r}="",0,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$E$2:$E$${matEndRow},MATCH(F${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$F$2:$F$${matEndRow},MATCH(F${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))))`,
+    wsRoofMain.getCell(`A${r}`).value = numLabel;
+    styleFormulaCell(wsRoofMain.getCell(`A${r}`), '0');
+    wsRoofMain.getCell(`B${r}`).value = { formula: `IF(C${r}="","(нет слоя)",${fName})` };
+    styleLabelCell(wsRoofMain.getCell(`B${r}`));
+    wsRoofMain.getCell(`C${r}`).value = { formula: fMat };
+    styleFormulaCell(wsRoofMain.getCell(`C${r}`), '@');
+    wsRoofMain.getCell(`D${r}`).value = { formula: `IF(C${r}="",0,${fThk})` };
+    styleFormulaCell(wsRoofMain.getCell(`D${r}`), '0.000');
+    wsRoofMain.getCell(`E${r}`).value = {
+      formula: `IF(C${r}="",0,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$E$2:$E$${matEndRow},MATCH(C${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$F$2:$F$${matEndRow},MATCH(C${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))))`,
     };
-    styleFormulaCell(wsRoofMain.getCell(`H${r}`), '0.00');
-    wsRoofMain.getCell(`I${r}`).value = { formula: `IF(H${r}>0,G${r}/H${r},0)` };
-    styleFormulaCell(wsRoofMain.getCell(`I${r}`), '0.0000');
-    wsRoofMain.getCell(`J${r}`).value = {
-      formula: `IF(F${r}="",0,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$G$2:$G$${matEndRow},MATCH(F${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$H$2:$H$${matEndRow},MATCH(F${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))))`,
+    styleFormulaCell(wsRoofMain.getCell(`E${r}`), '0.0000');
+    wsRoofMain.getCell(`F${r}`).value = { formula: `IF(E${r}>0,ROUND(D${r}/E${r},4),0)` };
+    styleFormulaCell(wsRoofMain.getCell(`F${r}`), '0.000');
+    wsRoofMain.getCell(`G${r}`).value = {
+      formula: `IF(C${r}="",0,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$G$2:$G$${matEndRow},MATCH(C${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$H$2:$H$${matEndRow},MATCH(C${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))))`,
     };
-    styleFormulaCell(wsRoofMain.getCell(`J${r}`), '0.00');
-    const roofMuLookup = `INDEX('Справ_Материалы'!$I$2:$I$${matEndRow},MATCH(F${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))`;
-    wsRoofMain.getCell(`K${r}`).value = {
-      formula: `IF(F${r}="",0,IF(${roofMuLookup}>0,G${r}/${roofMuLookup},0))`,
+    styleFormulaCell(wsRoofMain.getCell(`G${r}`), '0.00');
+    wsRoofMain.getCell(`H${r}`).value = { formula: `ROUND(F${r}*G${r},3)` };
+    styleFormulaCell(wsRoofMain.getCell(`H${r}`), '0.000');
+    wsRoofMain.getCell(`I${r}`).value = {
+      formula: `IF(C${r}="",0,INDEX('Справ_Материалы'!$I$2:$I$${matEndRow},MATCH(C${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)))`,
     };
-    styleFormulaCell(wsRoofMain.getCell(`K${r}`), '0.000');
-  });
+    styleFormulaCell(wsRoofMain.getCell(`I${r}`), '0.000');
+    wsRoofMain.getCell(`J${r}`).value = { formula: `IF(I${r}>0,ROUND(D${r}/I${r},3),0)` };
+    styleFormulaCell(wsRoofMain.getCell(`J${r}`), '0.000');
+    wsRoofMain.getCell(`K${r}`).value = { formula: `IF(C${r}="","(пустой слот)","${roleLabel}")` };
+    styleFormulaCell(wsRoofMain.getCell(`K${r}`), '@');
+  };
 
-  // Строка 12 справа: Выбранная пароизоляция покрытия (связана с Ввод_и_Итоги C19, F20, F21)
-  wsRoofMain.getCell('E12').value = { formula: `'Ввод_и_Итоги'!$C$19` };
-  styleLabelCell(wsRoofMain.getCell('E12'), true);
-  wsRoofMain.getCell('F12').value = 'ПАРОИЗОЛ.';
-  styleFormulaCell(wsRoofMain.getCell('F12'), '@', true);
-  wsRoofMain.getCell('G12').value = { formula: `'Ввод_и_Итоги'!$F$20/1000` };
-  styleFormulaCell(wsRoofMain.getCell('G12'), '0.0000');
-  wsRoofMain.getCell('H12').value = {
+  // Строки 7..8: Внутренние слои (под плитой)
+  writeRoofLookupLayerRow(7, 1, 'H', 'I', 'J', 'Внутренний слой');
+  writeRoofLookupLayerRow(8, 2, 'K', 'L', 'M', 'Внутренний слой');
+
+  // Строка 9: Многопустотная ж/б плита (приведенное R_пл в F9, D_i и R_п.i по пустоте в H9/J9 с R_п.возд = 0)
+  wsRoofMain.getRow(9).height = 21;
+  wsRoofMain.getCell('A9').value = 3;
+  styleFormulaCell(wsRoofMain.getCell('A9'), '0', true);
+  wsRoofMain.getCell('B9').value = {
+    formula: '"Многопустотная ж/б плита (h="&ROUND(H15*1000,0)&" мм, пустота d="&ROUND(H16*1000,0)&" мм)"',
+    result: `Многопустотная ж/б плита (h=${calc.roof.construction.slab.height} мм, пустота d=${calc.roof.construction.slab.voidDiameter} мм)`,
+  };
+  styleLabelCell(wsRoofMain.getCell('B9'), true);
+  wsRoofMain.getCell('C9').value = 'ПЛИТА';
+  styleFormulaCell(wsRoofMain.getCell('C9'), '@', true);
+  wsRoofMain.getCell('D9').value = { formula: 'H15' };
+  styleFormulaCell(wsRoofMain.getCell('D9'), '0.000', true);
+  wsRoofMain.getCell('E9').value = { formula: 'H18' };
+  styleFormulaCell(wsRoofMain.getCell('E9'), '0.0000');
+  wsRoofMain.getCell('F9').value = { formula: 'H22' };
+  styleFormulaCell(wsRoofMain.getCell('F9'), '0.000', true);
+  wsRoofMain.getCell('G9').value = { formula: 'K18' };
+  styleFormulaCell(wsRoofMain.getCell('G9'), '0.00');
+  wsRoofMain.getCell('H9').value = { formula: 'ROUND((2*K15/H18)*K18,3)' };
+  styleFormulaCell(wsRoofMain.getCell('H9'), '0.000');
+  wsRoofMain.getCell('I9').value = 0.03;
+  styleFormulaCell(wsRoofMain.getCell('I9'), '0.000');
+  wsRoofMain.getCell('J9').value = { formula: 'ROUND((2*K15)/I9,3)' };
+  styleFormulaCell(wsRoofMain.getCell('J9'), '0.000', true);
+  wsRoofMain.getCell('K9').value = 'ПЛИТА (R_п.возд=0)';
+  styleFormulaCell(wsRoofMain.getCell('K9'), '@', true);
+
+  // Строка 10: Утеплитель покрытия
+  wsRoofMain.getRow(10).height = 21;
+  wsRoofMain.getCell('A10').value = 4;
+  styleFormulaCell(wsRoofMain.getCell('A10'), '0', true);
+  wsRoofMain.getCell('B10').value = {
+    formula: `"Утеплитель "&'Ввод_и_Итоги'!$C$11&" ("&'Ввод_и_Итоги'!$F$31&")"`,
+    result: `Утеплитель ${calc.cipher.insulationCode} (${calc.roof.insulation.name})`,
+  };
+  styleLabelCell(wsRoofMain.getCell('B10'), true);
+  wsRoofMain.getCell('C10').value = 'INSULATION';
+  styleFormulaCell(wsRoofMain.getCell('C10'), '@', true);
+  wsRoofMain.getCell('D10').value = { formula: '$C$18' };
+  styleFormulaCell(wsRoofMain.getCell('D10'), '0.000', true, true);
+  wsRoofMain.getCell('E10').value = { formula: "'Ввод_и_Итоги'!$F$33" };
+  styleFormulaCell(wsRoofMain.getCell('E10'), '0.0000');
+  wsRoofMain.getCell('F10').value = { formula: 'IF(E10>0,ROUND(D10/E10,4),0)' };
+  styleFormulaCell(wsRoofMain.getCell('F10'), '0.000', true);
+  wsRoofMain.getCell('G10').value = { formula: "'Ввод_и_Итоги'!$F$34" };
+  styleFormulaCell(wsRoofMain.getCell('G10'), '0.00');
+  wsRoofMain.getCell('H10').value = { formula: 'ROUND(F10*G10,3)' };
+  styleFormulaCell(wsRoofMain.getCell('H10'), '0.000');
+  wsRoofMain.getCell('I10').value = { formula: "'Ввод_и_Итоги'!$F$35" };
+  styleFormulaCell(wsRoofMain.getCell('I10'), '0.000');
+  wsRoofMain.getCell('J10').value = { formula: 'IF(I10>0,ROUND(D10/I10,3),0)' };
+  styleFormulaCell(wsRoofMain.getCell('J10'), '0.000');
+  wsRoofMain.getCell('K10').value = 'УТЕПЛИТЕЛЬ';
+  styleFormulaCell(wsRoofMain.getCell('K10'), '@', true);
+
+  // Строки 11..12: Наружные слои (стяжка, кровля и др.)
+  writeRoofLookupLayerRow(11, 5, 'N', 'O', 'P', 'Наружный слой');
+  writeRoofLookupLayerRow(12, 6, 'Q', 'R', 'S', 'Наружный слой');
+
+  // Строка 13: Пароизоляция покрытия (идентично «Стена_Расчет» строка 12!)
+  wsRoofMain.getRow(13).height = 21;
+  wsRoofMain.getCell('A13').value = 'ПИ';
+  styleFormulaCell(wsRoofMain.getCell('A13'), '@', true);
+  wsRoofMain.getCell('B13').value = { formula: `"Пароизоляция: "&'Ввод_и_Итоги'!$C$19` };
+  styleLabelCell(wsRoofMain.getCell('B13'), true);
+  wsRoofMain.getCell('C13').value = {
+    formula: `INDEX('Справ_Пароизоляция'!$B$2:$B$${vbEndRow},MATCH('Ввод_и_Итоги'!$C$19,'Справ_Пароизоляция'!$A$2:$A$${vbEndRow},0))`,
+  };
+  styleFormulaCell(wsRoofMain.getCell('C13'), '@');
+  wsRoofMain.getCell('D13').value = { formula: `'Ввод_и_Итоги'!$F$20/1000` };
+  styleFormulaCell(wsRoofMain.getCell('D13'), '0.0000');
+  wsRoofMain.getCell('E13').value = {
     formula: `INDEX('Справ_Пароизоляция'!$E$2:$E$${vbEndRow},MATCH('Ввод_и_Итоги'!$C$19,'Справ_Пароизоляция'!$A$2:$A$${vbEndRow},0))`,
   };
-  styleFormulaCell(wsRoofMain.getCell('H12'), '0.00');
-  wsRoofMain.getCell('I12').value = { formula: `IF(G12>0,G12/H12,0)` };
-  styleFormulaCell(wsRoofMain.getCell('I12'), '0.0000');
-  wsRoofMain.getCell('J12').value = {
+  styleFormulaCell(wsRoofMain.getCell('E13'), '0.00');
+  wsRoofMain.getCell('F13').value = { formula: `IF(AND(D13>0,E13>0),D13/E13,0)` };
+  styleFormulaCell(wsRoofMain.getCell('F13'), '0.0000');
+  wsRoofMain.getCell('G13').value = {
     formula: `INDEX('Справ_Пароизоляция'!$F$2:$F$${vbEndRow},MATCH('Ввод_и_Итоги'!$C$19,'Справ_Пароизоляция'!$A$2:$A$${vbEndRow},0))`,
   };
-  styleFormulaCell(wsRoofMain.getCell('J12'), '0.0');
-  wsRoofMain.getCell('K12').value = { formula: `'Ввод_и_Итоги'!$F$21` };
-  styleFormulaCell(wsRoofMain.getCell('K12'), '0.000', true, true);
+  styleFormulaCell(wsRoofMain.getCell('G13'), '0.0');
+  wsRoofMain.getCell('H13').value = { formula: `ROUND(F13*G13,3)` };
+  styleFormulaCell(wsRoofMain.getCell('H13'), '0.000');
+  wsRoofMain.getCell('I13').value = { formula: `IF(J13>0,D13/J13,0)` };
+  styleFormulaCell(wsRoofMain.getCell('I13'), '0.00000');
+  wsRoofMain.getCell('J13').value = { formula: `'Ввод_и_Итоги'!$F$21` };
+  styleFormulaCell(wsRoofMain.getCell('J13'), '0.000', true, true);
+  wsRoofMain.getCell('K13').value = { formula: `IF(J13>0,"ПАРОИЗОЛЯЦИЯ","Не установлена")` };
+  styleFormulaCell(wsRoofMain.getCell('K13'), '@', true);
 
-  wsRoofMain.getCell('E13').value = 'Ручная δ_ут (м):';
-  styleLabelCell(wsRoofMain.getCell('E13'), true);
-  wsRoofMain.getCell('F13').value =
-    calc.cipher.overrides?.roofInsulationThickness ??
-    (calc.cipher.overrides?.roofCustomLayers || calc.cipher.overrides?.R_norm_roof !== undefined
-      ? calc.roof.delta_insulation_adopted
-      : null);
-  styleInputCell(wsRoofMain.getCell('F13'), '0.00');
-  wsRoofMain.mergeCells('G13:K13');
-  wsRoofMain.getCell('G13').value = 'Оставьте пустой для автоподбора δ_ут вверх до 10 мм';
-  styleLabelCell(wsRoofMain.getCell('G13'));
+  // Точные выражения сопротивлений теплопередаче и паропроницанию по пустоте и по ребру
+  const R_roof_void_exact = `(1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+(2*$K$15/$H$18+0.15)+$F$10+$F$11+$F$12+$F$13+1/'Ввод_и_Итоги'!$C$35)`;
+  // СП 2.04.01-2020 п. 10.5 и Шибеко п. 7.1.3: сопротивление паропроницанию замкнутой воздушной прослойки равно 0 (R_п.возд = 0)
+  const Rp_roof_void_exact = `(1/37+$J$7+$J$8+2*$K$15/0.03+$J$10+$J$11+$J$12+$J$13+1/77)`;
+  const R_roof_rib_exact = `(1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+$F$10+$F$11+$F$12+$F$13+1/'Ввод_и_Итоги'!$C$35)`;
+  const Rp_roof_rib_exact = `(1/37+$J$7+$J$8+$H$15/0.03+$J$10+$J$11+$J$12+$J$13+1/77)`;
 
-  wsRoofMain.getCell('E14').value = 'R_п пароизол.:';
-  styleLabelCell(wsRoofMain.getCell('E14'), true);
-  wsRoofMain.getCell('F14').value = { formula: 'K12' };
-  styleFormulaCell(wsRoofMain.getCell('F14'), '0.000', true, true);
-  wsRoofMain.mergeCells('G14:K14');
-  wsRoofMain.getCell('G14').value = 'Выбирайте материал и толщину пароизоляции на «Ввод_и_Итоги» (C19:C20)';
-  styleLabelCell(wsRoofMain.getCell('G14'));
+  // Блок 2 (строки 14..26): Сводка расчета покрытия слева (A15:D26) + Геометрия плиты и параметры справа (E15:K26)
+  styleSectionRow(wsRoofMain, 14, 12, '2. ПОДБОР УТЕПЛИТЕЛЯ, РАСЧЕТ R_п ПОКРЫТИЯ И ГЕОМЕТРИЯ МНОГОПУСТОТНОЙ Ж/Б ПЛИТЫ');
 
-  wsRoofMain.getCell('E15').value = 'Полка по пустоте δ_ф:';
-  styleLabelCell(wsRoofMain.getCell('E15'));
-  wsRoofMain.getCell('F15').value = { formula: '(C6-C7)/2' };
-  styleFormulaCell(wsRoofMain.getCell('F15'), '0.000');
-  wsRoofMain.getCell('G15').value = 'м; s_бет:';
-  styleLabelCell(wsRoofMain.getCell('G15'));
-  wsRoofMain.getCell('H15').value = { formula: `IF('Ввод_и_Итоги'!$C$33="А",17.98,19.4)` };
-  styleFormulaCell(wsRoofMain.getCell('H15'), '0.00');
-
-  const R_roof_void_exact = `(1/'Ввод_и_Итоги'!$C$34+SUM($I$8:$I$12)+(2*$F$15/$C$9+0.15)+$C$21/'Ввод_и_Итоги'!$F$33+1/'Ввод_и_Итоги'!$C$35)`;
-  // СП 2.04.01-2020 п. 10.5 и Шибеко п. 7.1.3: сопротивление паропроницанию замкнутой воздушной прослойки равно 0 (без +$C$7!)
-  const Rp_roof_void_exact = `(1/37+$K$8+$K$9+2*$F$15/0.03+$F$14+$C$21/'Ввод_и_Итоги'!$F$35+$K$10+$K$11+1/77)`;
-  const R_roof_rib_exact = `(1/'Ввод_и_Итоги'!$C$34+SUM($I$8:$I$12)+$C$13+$C$21/'Ввод_и_Итоги'!$F$33+1/'Ввод_и_Итоги'!$C$35)`;
-  const Rp_roof_rib_exact = `(1/37+$K$8+$K$9+$C$6/0.03+$F$14+$C$21/'Ввод_и_Итоги'!$F$35+$K$10+$K$11+1/77)`;
-
-  styleSectionRow(wsRoofMain, 17, 12, '2. ПОДБОР ТОЛЩИНЫ УТЕПЛИТЕЛЯ И ПРОВЕРКА ПОКРЫТИЯ');
   const roofSummaryRows: [number, string, string, string, string, boolean, boolean][] = [
-    [18, 'Сопротивление покрытия без утеплителя R_без_ут', `ROUND(1/'Ввод_и_Итоги'!$C$34+C15+SUM(I8:I12)+1/'Ввод_и_Итоги'!$C$35,4)`, '0.000', 'м²·°C/Вт', false, false],
-    [19, 'Требуемое сопротивление теплопередаче R_пр = R_норм · n', `ROUND('Ввод_и_Итоги'!$F$27*$J$5,2)`, '0.00', 'м²·°C/Вт', true, false],
-    [20, 'Расчетная толщина утеплителя δ_ут.расч = (R_пр - R_без_ут)·λ_ут', `ROUND((C19-C18)*'Ввод_и_Итоги'!$F$33,3)`, '0.000', 'м', false, false],
-    [21, 'Принятая толщина утеплителя δ_ут.прин', 'IF(F13="",MAX(0.05,ROUNDUP(C20,2)),F13)', '0.00', 'м', true, true],
-    [22, 'Фактическое приведенное сопротивление покрытия R_0', `ROUND(C18+C21/'Ввод_и_Итоги'!$F$33,2)`, '0.00', 'м²·°C/Вт', true, true],
-    [23, 'Фактическое сопротивление по сечению через пустоту R_0^ф', `ROUND(${R_roof_void_exact},2)`, '0.00', 'м²·°C/Вт', false, false],
-    [24, 'Тепловая инерция покрытия по пустоте D_покрытия (s_возд = 0)', `ROUND(I8*J8+I9*J9+(2*F15/C9)*H15+I12*J12+(C21/'Ввод_и_Итоги'!$F$33)*'Ввод_и_Итоги'!$F$34+I10*J10+I11*J11,2)`, '0.00', 'безразм.', false, false],
-    [25, 'Расчетная зимняя температура t_н для покрытия (по D_покрытия)', excelDesignTempByD('C24'), '0.0', '°C', true, false],
-    [26, 'Температура внутренней поверхности потолка τ_в (без коэфф. m)', `ROUND('Ввод_и_Итоги'!$C$26-('Ввод_и_Итоги'!$C$26-C25)/(${R_roof_void_exact}*'Ввод_и_Итоги'!$C$34),2)`, '0.00', '°C', true, false],
-    [27, 'Суммарное сопротивление паропроницанию R_п (по пустоте, R_п.возд=0)', `ROUND(${Rp_roof_void_exact},2)`, '0.00', 'м²·ч·Па/мг', false, false],
-    [28, 'Заключение по покрытию / чердачному перекрытию', `IF(AND(C22>=C19,C26>'Ввод_и_Итоги'!$C$30),"СООТВЕТСТВУЕТ ✓","ТРЕБУЕТ ПРОВЕРКИ ✗")`, '@', 'СП 2.04.01-2020', true, true],
+    [15, 'Сопротивление покрытия без утеплителя R_без_ут', `ROUND(1/'Ввод_и_Итоги'!$C$34+F7+F8+F9+F11+F12+F13+1/'Ввод_и_Итоги'!$C$35,4)`, '0.000', 'м²·°C/Вт', false, false],
+    [16, 'Требуемое сопротивление теплопередаче R_пр = R_норм · n', `ROUND('Ввод_и_Итоги'!$F$27*$J$5,2)`, '0.00', 'м²·°C/Вт', true, false],
+    [17, 'Расчетная толщина утеплителя δ_ут.расч = (R_пр - R_без_ут)·λ_ут', `ROUND((C16-C15)*'Ввод_и_Итоги'!$F$33,3)`, '0.000', 'м', false, false],
+    [18, 'Принятая толщина утеплителя δ_ут.прин (ручн. правка в K19)', 'IF(K19="",MAX(0.05,ROUNDUP(C17,2)),K19)', '0.00', 'м', true, true],
+    [19, 'Фактическое приведенное сопротивление покрытия R_0', `ROUND(1/'Ввод_и_Итоги'!$C$34+SUM(F7:F13)+1/'Ввод_и_Итоги'!$C$35,2)`, '0.00', 'м²·°C/Вт', true, true],
+    [20, 'Фактическое сопротивление по сечению через пустоту R_0^пуст', `ROUND(${R_roof_void_exact},2)`, '0.00', 'м²·°C/Вт', false, false],
+    [21, 'Тепловая инерция покрытия по пустоте D_покрытия (s_возд = 0)', 'ROUND(SUM(H7:H13),2)', '0.00', 'безразм.', false, false],
+    [22, 'Расчетная зимняя температура t_н для покрытия (по D_покрытия)', excelDesignTempByD('C21'), '0.0', '°C', true, false],
+    [23, 'Температура внутренней поверхности потолка τ_в (по пустоте)', `ROUND('Ввод_и_Итоги'!$C$26-('Ввод_и_Итоги'!$C$26-C22)/(${R_roof_void_exact}*'Ввод_и_Итоги'!$C$34),2)`, '0.00', '°C', true, false],
+    [24, 'Суммарное сопротивление паропроницанию R_п (по пустоте, R_п.возд=0)', `ROUND(${Rp_roof_void_exact},2)`, '0.00', 'м²·ч·Па/мг', true, true],
+    [25, 'Суммарное сопротивление паропроницанию R_п (по сплошному ребру)', `ROUND(${Rp_roof_rib_exact},2)`, '0.00', 'м²·ч·Па/мг', true, false],
+    [26, 'Заключение по покрытию / чердачному перекрытию', `IF(AND(C19>=C16,C23>'Ввод_и_Итоги'!$C$30),"СООТВЕТСТВУЕТ ✓","ТРЕБУЕТ ПРОВЕРКИ ✗")`, '@', 'СП 2.04.01-2020', true, true],
   ];
   roofSummaryRows.forEach(([r, lbl, formula, fmt, unit, bold, accent]) => {
     wsRoofMain.getRow(r).height = 20;
@@ -1721,60 +1776,127 @@ export async function buildCourseworkWorkbook(
     styleLabelCell(wsRoofMain.getCell(`D${r}`));
   });
 
-  // Справа: E_в(t_в), t_р, правило выбора t_н по табл. 6.3 и стационарная τ_в по худшему сечению (по ребру)
-  wsRoofMain.mergeCells('E23:G23');
-  wsRoofMain.getCell('E23').value = 'Насыщенное давление пара внутри E_в(t_в):';
-  styleLabelCell(wsRoofMain.getCell('E23'), true);
-  wsRoofMain.getCell('H23').value = { formula: "'Ввод_и_Итоги'!$C$28" };
-  styleFormulaCell(wsRoofMain.getCell('H23'), '0.0', true, true);
-  wsRoofMain.mergeCells('I23:K23');
-  wsRoofMain.getCell('I23').value = {
-    formula: '"Па (e_в = "&TEXT(\'Ввод_и_Итоги\'!$C$29,"0.00")&" Па)"',
-  };
-  styleLabelCell(wsRoofMain.getCell('I23'));
+  // Справа E15:K26: Параметры многопустотной ж/б плиты (E:H) + Ввод ручной δ_ут, R_п ПИ, микроклимат и позиция ПИ (I:K)
+  const slabRightRows: [number, string, string, string, boolean, boolean, string, string | number | null, string, boolean, boolean, boolean][] = [
+    [
+      15,
+      'Высота плиты h, м',
+      `INDEX('Справ_Конструкции'!$E$${roofStartRow}:$E$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`,
+      '0.000', false, false,
+      'Полка δ_ф = (h-d)/2, м', '(H15-H16)/2', '0.000', false, false, false,
+    ],
+    [
+      16,
+      'Диаметр пустоты d, м',
+      `INDEX('Справ_Конструкции'!$F$${roofStartRow}:$F$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`,
+      '0.000', false, false,
+      'Сторона экв. кв. a, м', 'ROUND(SQRT(PI()*H16^2/4),4)', '0.0000', false, false, false,
+    ],
+    [
+      17,
+      'Шаг пустот b_шаг, м',
+      `INDEX('Справ_Конструкции'!$G$${roofStartRow}:$G$${roofEndRow},MATCH($C$5,'Справ_Конструкции'!$A$${roofStartRow}:$A$${roofEndRow},0))/1000`,
+      '0.000', false, false,
+      'Ширина ребра b_1 = b-a, м', 'ROUND(H17-K16,4)', '0.0000', false, false, false,
+    ],
+    [
+      18,
+      'λ железобетона λ_б (А/Б)',
+      `IF('Ввод_и_Итоги'!$C$33="А",1.92,2.04)`,
+      '0.00', false, false,
+      'Теплоусвоение s_бет', `IF('Ввод_и_Итоги'!$C$33="А",17.98,19.4)`, '0.00', false, false, false,
+    ],
+    [
+      19,
+      'Прив. полка δ_п = (h-a)/2, м',
+      'ROUND((H15-K16)/2,4)',
+      '0.0000', false, false,
+      'Ручная δ_ут (м, пусто=авто):',
+      calc.cipher.overrides?.roofInsulationThickness ??
+        (calc.cipher.overrides?.roofCustomLayers || calc.cipher.overrides?.R_norm_roof !== undefined
+          ? calc.roof.delta_insulation_adopted
+          : null),
+      '0.00', true, false, true,
+    ],
+    [
+      20,
+      'R_1 по ребру = h / λ_б',
+      'H15/H18',
+      '0.0000', false, false,
+      'R_п пароизоляции (J13):', 'J13', '0.000', true, true, false,
+    ],
+    [
+      21,
+      'R_2 по пустоте = 2δ_п/λ_б+0.15',
+      '(2*H19)/H18+0.15',
+      '0.0000', false, false,
+      'Насыщ. давление E_в, Па:', "'Ввод_и_Итоги'!$C$28", '0.0', true, false, false,
+    ],
+    [
+      22,
+      'Приведенное R_пл плиты',
+      'ROUND((K17+K16)/(K17/H20+K16/H21),3)',
+      '0.000', true, true,
+      'Точка росы t_р, °C:', "'Ввод_и_Итоги'!$C$30", '0.00', true, false, false,
+    ],
+    [
+      23,
+      'τ_в по ребру (худшее сеч.), °C',
+      `ROUND('Ввод_и_Итоги'!$C$26-('Ввод_и_Итоги'!$C$26-C22)/(${R_roof_rib_exact}*'Ввод_и_Итоги'!$C$34),2)`,
+      '0.00', true, false,
+      'R_0 по ребру, м²·°C/Вт:', `ROUND(${R_roof_rib_exact},2)`, '0.00', false, false, false,
+    ],
+  ];
+
+  slabRightRows.forEach(([r, lbl1, f1, fmt1, b1, a1, lbl2, f2, fmt2, b2, a2, isInput2]) => {
+    wsRoofMain.mergeCells(`E${r}:G${r}`);
+    wsRoofMain.getCell(`E${r}`).value = lbl1;
+    styleLabelCell(wsRoofMain.getCell(`E${r}`), b1);
+    wsRoofMain.getCell(`H${r}`).value = { formula: f1 };
+    styleFormulaCell(wsRoofMain.getCell(`H${r}`), fmt1, b1, a1);
+
+    wsRoofMain.mergeCells(`I${r}:J${r}`);
+    wsRoofMain.getCell(`I${r}`).value = lbl2;
+    styleLabelCell(wsRoofMain.getCell(`I${r}`), b2);
+    const kCell = wsRoofMain.getCell(`K${r}`);
+    if (isInput2) {
+      kCell.value = f2 as number | null;
+      styleInputCell(kCell, fmt2);
+    } else {
+      kCell.value = { formula: f2 as string };
+      styleFormulaCell(kCell, fmt2, b2, a2);
+    }
+  });
 
   wsRoofMain.mergeCells('E24:G24');
-  wsRoofMain.getCell('E24').value = 'Точка росы внутреннего воздуха t_р:';
+  wsRoofMain.getCell('E24').value = 'Правило выбора t_н (табл. 6.3 СП 2.04.01):';
   styleLabelCell(wsRoofMain.getCell('E24'));
-  wsRoofMain.getCell('H24').value = { formula: "'Ввод_и_Итоги'!$C$30" };
-  styleFormulaCell(wsRoofMain.getCell('H24'), '0.00', true);
-  wsRoofMain.mergeCells('I24:K24');
-  wsRoofMain.getCell('I24').value = '°C (интерполяция по табл. Е.1)';
-  styleLabelCell(wsRoofMain.getCell('I24'));
+  wsRoofMain.mergeCells('H24:K24');
+  wsRoofMain.getCell('H24').value = { formula: excelDesignTempRuleByD('C21') };
+  styleFormulaCell(wsRoofMain.getCell('H24'), '@', true);
 
   wsRoofMain.mergeCells('E25:G25');
-  wsRoofMain.getCell('E25').value = 'Правило выбора t_н (табл. 6.3 СП 2.04.01):';
-  styleLabelCell(wsRoofMain.getCell('E25'));
-  wsRoofMain.mergeCells('H25:K25');
-  wsRoofMain.getCell('H25').value = { formula: excelDesignTempRuleByD('C24') };
-  styleFormulaCell(wsRoofMain.getCell('H25'), '@', true);
-
-  wsRoofMain.mergeCells('E26:G26');
-  wsRoofMain.getCell('E26').value = 'τ_в по худшему сечению (по ребру):';
-  styleLabelCell(wsRoofMain.getCell('E26'), true);
-  wsRoofMain.getCell('H26').value = {
-    formula: `ROUND('Ввод_и_Итоги'!$C$26-('Ввод_и_Итоги'!$C$26-C25)/(${R_roof_rib_exact}*'Ввод_и_Итоги'!$C$34),2)`,
-  };
-  styleFormulaCell(wsRoofMain.getCell('H26'), '0.00', true);
-  wsRoofMain.mergeCells('I26:K26');
-  wsRoofMain.getCell('I26').value = '°C (стационарно, без коэфф. m)';
-  styleLabelCell(wsRoofMain.getCell('I26'));
-
-  wsRoofMain.mergeCells('E27:G27');
-  wsRoofMain.getCell('E27').value = 'Позиция пароизоляции (код 0..3):';
-  styleLabelCell(wsRoofMain.getCell('E27'), true);
-  wsRoofMain.getCell('H27').value = {
+  wsRoofMain.getCell('E25').value = 'Позиция пароизоляции (код 0..3):';
+  styleLabelCell(wsRoofMain.getCell('E25'), true);
+  wsRoofMain.getCell('H25').value = {
     formula:
       'IF(\'Ввод_и_Итоги\'!$C$46="На внутр. поверхности потолка",0,' +
       'IF(\'Ввод_и_Итоги\'!$C$46="После внутр. отделки (под плитой)",1,' +
       'IF(\'Ввод_и_Итоги\'!$C$46="После утеплителя (ошибочное расположение)",3,2)))',
   };
-  styleFormulaCell(wsRoofMain.getCell('H27'), '0', true, true);
-  wsRoofMain.mergeCells('I27:K27');
-  wsRoofMain.getCell('I27').value = { formula: "'Ввод_и_Итоги'!$C$46" };
-  styleFormulaCell(wsRoofMain.getCell('I27'), '@', true);
+  styleFormulaCell(wsRoofMain.getCell('H25'), '0', true, true);
+  wsRoofMain.mergeCells('I25:K25');
+  wsRoofMain.getCell('I25').value = { formula: "'Ввод_и_Итоги'!$C$46" };
+  styleFormulaCell(wsRoofMain.getCell('I25'), '@', true);
 
-  // Таблица 3: Влажностный режим покрытия (Сечение I по пустоте — с ЯВНЫМ слоем пароизоляции, интерполяцией E(t) и R_п.возд = 0!)
+  wsRoofMain.mergeCells('E26:K26');
+  wsRoofMain.getCell('E26').value = {
+    formula: '"e_в = "&ROUND(\'Ввод_и_Итоги\'!$C$29,2)&" Па; выбор пароизоляции покрытия на «Ввод_и_Итоги» (C19:C20, C46)"',
+    result: `e_в = ${calc.internalConditions.e_v.toFixed(2).replace('.', ',')} Па; выбор пароизоляции покрытия на «Ввод_и_Итоги» (C19:C20, C46)`,
+  };
+  styleLabelCell(wsRoofMain.getCell('E26'));
+
+  // Таблица 3 (строки 30..47): Влажностный режим покрытия (Сечение I по пустоте — с ЯВНЫМ слоем пароизоляции, интерполяцией E(t) и R_п.возд = 0!)
   styleSectionRow(wsRoofMain, 30, 12, '3. ВЛАЖНОСТНЫЙ РЕЖИМ ПОКРЫТИЯ (СЕЧЕНИЕ I ПО ПУСТОТЕ ПЛИТЫ, ЯВНЫЙ СЛОЙ ПАРОИЗОЛЯЦИИ, R_п.возд = 0)');
 
   // Строка 31: Пояснение отличия столбцов t_зима и t_от.пер
@@ -1828,26 +1950,26 @@ export async function buildCourseworkWorkbook(
   }
 
   // Хелперы: учтена ли пароизоляция к этапу k (0=поверхность, 1=после отделки, 2=перед утеплителем, 3=после утеплителя)
-  const rVbX = (k: number) => `IF(AND($F$14>0,$H$27<=${k}),$G$12*1000,0)`;
-  const rVbR = (k: number) => `IF(AND($F$14>0,$H$27<=${k}),$I$12,0)`;
-  const rVbRp = (k: number) => `IF(AND($F$14>0,$H$27<=${k}),$F$14,0)`;
-  const rVbLabel = `"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$19&" (δ="&TEXT('Ввод_и_Итоги'!$F$20,"0.00")&" мм)"`;
+  const rVbX = (k: number) => `IF(AND($J$13>0,$H$25<=${k}),$D$13*1000,0)`;
+  const rVbR = (k: number) => `IF(AND($J$13>0,$H$25<=${k}),$F$13,0)`;
+  const rVbRp = (k: number) => `IF(AND($J$13>0,$H$25<=${k}),$J$13,0)`;
+  const rVbLabel = `"★ Пароизоляция: "&'Ввод_и_Итоги'!$C$19&" (δ="&ROUND('Ввод_и_Итоги'!$F$20,2)&" мм)"`;
 
   // Строки 34..46 (13 слотов, до 10 активных): активные точки с автосжатием в столбце L и явной строкой пароизоляции!
   const roofVoidPts: [string | number, string, string, string, string, boolean?, boolean?][] = [
     [1, '"Внутренняя поверхность потолка τ_в"', '0', "1/'Ввод_и_Итоги'!$C$34", '1/37'],
-    ['ПИ.0', `IF(AND($F$14>0,$H$27=0),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=0),ROUND($G$12*1000,1),"")`, `IF(AND($F$14>0,$H$27=0),1/'Ввод_и_Итоги'!$C$34+$I$12,"")`, `IF(AND($F$14>0,$H$27=0),1/37+$F$14,"")`, false, true],
-    [2, 'IF($E$8="","(нет внутр. слоя — пропуск)","Граница: "&$E$8)', `IF($E$8="","",ROUND(($G$8+$G$9)*1000+${rVbX(0)},1))`, `IF($E$8="","",1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+${rVbR(0)})`, `IF($E$8="","",1/37+$K$8+$K$9+${rVbRp(0)})`],
-    ['ПИ.1', `IF(AND($F$14>0,$H$27=1),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=1),ROUND(($G$8+$G$9+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=1),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$I$12,"")`, `IF(AND($F$14>0,$H$27=1),1/37+$K$8+$K$9+$F$14,"")`, false, true],
-    [3, '"Граница: Нижняя полка ж/б плиты"', `ROUND(($G$8+$G$9+$F$15)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$F$15/$C$9+${rVbR(1)}`, `1/37+$K$8+$K$9+$F$15/0.03+${rVbRp(1)}`],
-    [4, '"Граница: Воздушная прослойка (пустота d, R_п=0)"', `ROUND(($G$8+$G$9+$F$15+$C$7)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$F$15/$C$9+0.15+${rVbR(1)}`, `1/37+$K$8+$K$9+$F$15/0.03+${rVbRp(1)}`],
-    [5, '"Граница: Верхняя полка ж/б плиты"', `ROUND(($G$8+$G$9+$C$6)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+${rVbR(1)}`, `1/37+$K$8+$K$9+2*$F$15/0.03+${rVbRp(1)}`],
-    ['ПИ.2', `IF(AND($F$14>0,$H$27=2),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=2),ROUND(($G$8+$G$9+$C$6+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=2),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+$I$12,"")`, `IF(AND($F$14>0,$H$27=2),1/37+$K$8+$K$9+2*$F$15/0.03+$F$14,"")`, false, true],
-    [6, '"★ Середина утеплителя ("&ROUND($C$21*500,0)&" мм)"', `ROUND(($G$8+$G$9+$C$6+$C$21/2)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+${rVbR(2)}+($C$21/2)/'Ввод_и_Итоги'!$F$33`, `1/37+$K$8+$K$9+2*$F$15/0.03+${rVbRp(2)}+($C$21/2)/'Ввод_и_Итоги'!$F$35`, true, false],
-    [7, '"Граница: Утеплитель "&\'Ввод_и_Итоги\'!$C$11', `ROUND(($G$8+$G$9+$C$6+$C$21)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+${rVbR(2)}+$C$21/'Ввод_и_Итоги'!$F$33`, `1/37+$K$8+$K$9+2*$F$15/0.03+${rVbRp(2)}+$C$21/'Ввод_и_Итоги'!$F$35`],
-    ['ПИ.3', `IF(AND($F$14>0,$H$27=3),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=3),ROUND(($G$8+$G$9+$C$6+$C$21+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=3),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+$C$21/'Ввод_и_Итоги'!$F$33+$I$12,"")`, `IF(AND($F$14>0,$H$27=3),1/37+$K$8+$K$9+2*$F$15/0.03+$C$21/'Ввод_и_Итоги'!$F$35+$F$14,"")`, false, true],
-    [8, 'IF($E$11="","(1 нар. слой — пропуск)","Граница: "&$E$10&" (под кровлей)")', `IF($E$11="","",ROUND(($G$8+$G$9+$C$6+$C$21+$G$10)*1000+${rVbX(3)},1))`, `IF($E$11="","",1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+2*$F$15/$C$9+0.15+$C$21/'Ввод_и_Итоги'!$F$33+$I$10+${rVbR(3)})`, `IF($E$11="","",1/37+$K$8+$K$9+2*$F$15/0.03+$C$21/'Ввод_и_Итоги'!$F$35+$K$10+${rVbRp(3)})`],
-    [9, '"Наружная поверхность покрытия τ_н"', `ROUND(($G$8+$G$9+$C$6+$C$21+$G$10+$G$11)*1000+${rVbX(3)},1)`, `1/'Ввод_и_Итоги'!$C$34+SUM($I$8:$I$11)+2*$F$15/$C$9+0.15+$C$21/'Ввод_и_Итоги'!$F$33+${rVbR(3)}`, `1/37+$K$8+$K$9+2*$F$15/0.03+$C$21/'Ввод_и_Итоги'!$F$35+$K$10+$K$11+${rVbRp(3)}`],
+    ['ПИ.0', `IF(AND($J$13>0,$H$25=0),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=0),ROUND($D$13*1000,1),"")`, `IF(AND($J$13>0,$H$25=0),1/'Ввод_и_Итоги'!$C$34+$F$13,"")`, `IF(AND($J$13>0,$H$25=0),1/37+$J$13,"")`, false, true],
+    [2, 'IF($C$7="","(нет внутр. слоя — пропуск)","Граница: "&$B$7)', `IF($C$7="","",ROUND(($D$7+$D$8)*1000+${rVbX(0)},1))`, `IF($C$7="","",1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+${rVbR(0)})`, `IF($C$7="","",1/37+$J$7+$J$8+${rVbRp(0)})`],
+    ['ПИ.1', `IF(AND($J$13>0,$H$25=1),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=1),ROUND(($D$7+$D$8+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=1),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$F$13,"")`, `IF(AND($J$13>0,$H$25=1),1/37+$J$7+$J$8+$J$13,"")`, false, true],
+    [3, '"Граница: Нижняя полка ж/б плиты"', `ROUND(($D$7+$D$8+$K$15)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$K$15/$H$18+${rVbR(1)}`, `1/37+$J$7+$J$8+$K$15/0.03+${rVbRp(1)}`],
+    [4, '"Граница: Воздушная прослойка (пустота d, R_п=0)"', `ROUND(($D$7+$D$8+$K$15+$H$16)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$K$15/$H$18+0.15+${rVbR(1)}`, `1/37+$J$7+$J$8+$K$15/0.03+${rVbRp(1)}`],
+    [5, '"Граница: Верхняя полка ж/б плиты"', `ROUND(($D$7+$D$8+$H$15)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+${rVbR(1)}`, `1/37+$J$7+$J$8+2*$K$15/0.03+${rVbRp(1)}`],
+    ['ПИ.2', `IF(AND($J$13>0,$H$25=2),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=2),ROUND(($D$7+$D$8+$H$15+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=2),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+$F$13,"")`, `IF(AND($J$13>0,$H$25=2),1/37+$J$7+$J$8+2*$K$15/0.03+$J$13,"")`, false, true],
+    [6, '"★ Середина утеплителя ("&ROUND($D$10*500,0)&" мм)"', `ROUND(($D$7+$D$8+$H$15+$D$10/2)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+${rVbR(2)}+$F$10/2`, `1/37+$J$7+$J$8+2*$K$15/0.03+${rVbRp(2)}+$J$10/2`, true, false],
+    [7, '"Граница: Утеплитель "&\'Ввод_и_Итоги\'!$C$11', `ROUND(($D$7+$D$8+$H$15+$D$10)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+${rVbR(2)}+$F$10`, `1/37+$J$7+$J$8+2*$K$15/0.03+${rVbRp(2)}+$J$10`],
+    ['ПИ.3', `IF(AND($J$13>0,$H$25=3),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=3),ROUND(($D$7+$D$8+$H$15+$D$10+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=3),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+$F$10+$F$13,"")`, `IF(AND($J$13>0,$H$25=3),1/37+$J$7+$J$8+2*$K$15/0.03+$J$10+$J$13,"")`, false, true],
+    [8, 'IF($C$12="","(1 нар. слой — пропуск)","Граница: "&$B$11&" (под кровлей)")', `IF($C$12="","",ROUND(($D$7+$D$8+$H$15+$D$10+$D$11)*1000+${rVbX(3)},1))`, `IF($C$12="","",1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+$F$10+$F$11+${rVbR(3)})`, `IF($C$12="","",1/37+$J$7+$J$8+2*$K$15/0.03+$J$10+$J$11+${rVbRp(3)})`],
+    [9, '"Наружная поверхность покрытия τ_н"', `ROUND(($D$7+$D$8+$H$15+$D$10+$D$11+$D$12)*1000+${rVbX(3)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+2*$K$15/$H$18+0.15+$F$10+$F$11+$F$12+${rVbR(3)}`, `1/37+$J$7+$J$8+2*$K$15/0.03+$J$10+$J$11+$J$12+${rVbRp(3)}`],
   ];
 
   roofVoidPts.forEach(([idx, nameF, xF, rF, rpF, isMid, isVb], i) => {
@@ -1863,7 +1985,7 @@ export async function buildCourseworkWorkbook(
     styleFormulaCell(wsRoofMain.getCell(`D${r}`), '0.000');
     wsRoofMain.getCell(`E${r}`).value = { formula: rpF };
     styleFormulaCell(wsRoofMain.getCell(`E${r}`), '0.000');
-    wsRoofMain.getCell(`F${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-$C$25)/${R_roof_void_exact})*D${r})` };
+    wsRoofMain.getCell(`F${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-$C$22)/${R_roof_void_exact})*D${r})` };
     styleFormulaCell(wsRoofMain.getCell(`F${r}`), '0.00');
     wsRoofMain.getCell(`G${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-'Ввод_и_Итоги'!$F$13)/${R_roof_void_exact})*D${r})` };
     styleFormulaCell(wsRoofMain.getCell(`G${r}`), '0.00', true);
@@ -1892,16 +2014,16 @@ export async function buildCourseworkWorkbook(
   wsRoofMain.getCell('A47').value = 'Воздух нар.';
   styleFormulaCell(wsRoofMain.getCell('A47'), '@', true);
   wsRoofMain.getCell('B47').value = {
-    formula: '"Наружный воздух (зима t_н = "&$C$25&"°C / от. пер. t_н.от = "&\'Ввод_и_Итоги\'!$F$13&"°C)"',
+    formula: '"Наружный воздух (зима t_н = "&$C$22&"°C / от. пер. t_н.от = "&\'Ввод_и_Итоги\'!$F$13&"°C)"',
   };
   styleLabelCell(wsRoofMain.getCell('B47'), true);
-  wsRoofMain.getCell('C47').value = { formula: 'ROUND(($G$8+$G$9+$C$6+$G$12+$C$21+$G$10+$G$11)*1000,1)' };
+  wsRoofMain.getCell('C47').value = { formula: 'ROUND(SUM($D$7:$D$13)*1000,1)' };
   styleFormulaCell(wsRoofMain.getCell('C47'), 'General');
   wsRoofMain.getCell('D47').value = { formula: R_roof_void_exact };
   styleFormulaCell(wsRoofMain.getCell('D47'), '0.000');
   wsRoofMain.getCell('E47').value = { formula: Rp_roof_void_exact };
   styleFormulaCell(wsRoofMain.getCell('E47'), '0.000');
-  wsRoofMain.getCell('F47').value = { formula: '$C$25' };
+  wsRoofMain.getCell('F47').value = { formula: '$C$22' };
   styleFormulaCell(wsRoofMain.getCell('F47'), '0.00', true);
   wsRoofMain.getCell('G47').value = { formula: "'Ввод_и_Итоги'!$F$13" };
   styleFormulaCell(wsRoofMain.getCell('G47'), '0.00', true);
@@ -1919,7 +2041,7 @@ export async function buildCourseworkWorkbook(
     wsRoofMain.getCell(47, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
   }
 
-  // Таблица 4: Худшее сечение (Сечение II по сплошному бетонному ребру плиты — с явной строкой ПИ и ранжированием L52:L61)
+  // Таблица 4 (строки 49..62): Худшее сечение (Сечение II по сплошному бетонному ребру плиты — с явной строкой ПИ и ранжированием L52:L61)
   styleSectionRow(wsRoofMain, 49, 12, '4. ХУДШЕЕ СЕЧЕНИЕ ПОКРЫТИЯ (СЕЧЕНИЕ II ПО СПЛОШНОМУ БЕТОННОМУ РЕБРУ ПЛИТЫ)');
   styleTableHeader(wsRoofMain, 50, [
     '№', 'Сечение / граница слоя (по ребру)', 'x, мм', 'R_накопл',
@@ -1962,15 +2084,15 @@ export async function buildCourseworkWorkbook(
 
   const roofRibPts: [string | number, string, string, string, string, boolean?, boolean?][] = [
     [1, '"Внутренняя поверхность потолка τ_в (по ребру)"', '0', "1/'Ввод_и_Итоги'!$C$34", '1/37'],
-    ['ПИ.0', `IF(AND($F$14>0,$H$27=0),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=0),ROUND($G$12*1000,1),"")`, `IF(AND($F$14>0,$H$27=0),1/'Ввод_и_Итоги'!$C$34+$I$12,"")`, `IF(AND($F$14>0,$H$27=0),1/37+$F$14,"")`, false, true],
-    [2, 'IF($E$8="","(нет внутр. слоя — пропуск)","Граница: "&$E$8)', `IF($E$8="","",ROUND(($G$8+$G$9)*1000+${rVbX(0)},1))`, `IF($E$8="","",1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+${rVbR(0)})`, `IF($E$8="","",1/37+$K$8+$K$9+${rVbRp(0)})`],
-    ['ПИ.1', `IF(AND($F$14>0,$H$27=1),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=1),ROUND(($G$8+$G$9+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=1),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$I$12,"")`, `IF(AND($F$14>0,$H$27=1),1/37+$K$8+$K$9+$F$14,"")`, false, true],
-    [3, '"Граница: Сплошное ж/б ребро плиты"', `ROUND(($G$8+$G$9+$C$6)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$C$13+${rVbR(1)}`, `1/37+$K$8+$K$9+$C$6/0.03+${rVbRp(1)}`],
-    ['ПИ.2', `IF(AND($F$14>0,$H$27=2),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=2),ROUND(($G$8+$G$9+$C$6+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=2),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$C$13+$I$12,"")`, `IF(AND($F$14>0,$H$27=2),1/37+$K$8+$K$9+$C$6/0.03+$F$14,"")`, false, true],
-    [4, '"★ Середина утеплителя ("&ROUND($C$21*500,0)&" мм)"', `ROUND(($G$8+$G$9+$C$6+$C$21/2)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$C$13+${rVbR(2)}+($C$21/2)/'Ввод_и_Итоги'!$F$33`, `1/37+$K$8+$K$9+$C$6/0.03+${rVbRp(2)}+($C$21/2)/'Ввод_и_Итоги'!$F$35`, true, false],
-    [5, '"Граница: Утеплитель "&\'Ввод_и_Итоги\'!$C$11', `ROUND(($G$8+$G$9+$C$6+$C$21)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$C$13+${rVbR(2)}+$C$21/'Ввод_и_Итоги'!$F$33`, `1/37+$K$8+$K$9+$C$6/0.03+${rVbRp(2)}+$C$21/'Ввод_и_Итоги'!$F$35`],
-    ['ПИ.3', `IF(AND($F$14>0,$H$27=3),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($F$14>0,$H$27=3),ROUND(($G$8+$G$9+$C$6+$C$21+$G$12)*1000,1),"")`, `IF(AND($F$14>0,$H$27=3),1/'Ввод_и_Итоги'!$C$34+$I$8+$I$9+$C$13+$C$21/'Ввод_и_Итоги'!$F$33+$I$12,"")`, `IF(AND($F$14>0,$H$27=3),1/37+$K$8+$K$9+$C$6/0.03+$C$21/'Ввод_и_Итоги'!$F$35+$F$14,"")`, false, true],
-    [6, '"Наружная поверхность покрытия τ_н"', `ROUND(($G$8+$G$9+$C$6+$C$21+$G$10+$G$11)*1000+${rVbX(3)},1)`, `1/'Ввод_и_Итоги'!$C$34+SUM($I$8:$I$11)+$C$13+$C$21/'Ввод_и_Итоги'!$F$33+${rVbR(3)}`, `1/37+$K$8+$K$9+$C$6/0.03+$C$21/'Ввод_и_Итоги'!$F$35+$K$10+$K$11+${rVbRp(3)}`],
+    ['ПИ.0', `IF(AND($J$13>0,$H$25=0),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=0),ROUND($D$13*1000,1),"")`, `IF(AND($J$13>0,$H$25=0),1/'Ввод_и_Итоги'!$C$34+$F$13,"")`, `IF(AND($J$13>0,$H$25=0),1/37+$J$13,"")`, false, true],
+    [2, 'IF($C$7="","(нет внутр. слоя — пропуск)","Граница: "&$B$7)', `IF($C$7="","",ROUND(($D$7+$D$8)*1000+${rVbX(0)},1))`, `IF($C$7="","",1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+${rVbR(0)})`, `IF($C$7="","",1/37+$J$7+$J$8+${rVbRp(0)})`],
+    ['ПИ.1', `IF(AND($J$13>0,$H$25=1),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=1),ROUND(($D$7+$D$8+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=1),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$F$13,"")`, `IF(AND($J$13>0,$H$25=1),1/37+$J$7+$J$8+$J$13,"")`, false, true],
+    [3, '"Граница: Сплошное ж/б ребро плиты"', `ROUND(($D$7+$D$8+$H$15)*1000+${rVbX(1)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+${rVbR(1)}`, `1/37+$J$7+$J$8+$H$15/0.03+${rVbRp(1)}`],
+    ['ПИ.2', `IF(AND($J$13>0,$H$25=2),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=2),ROUND(($D$7+$D$8+$H$15+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=2),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+$F$13,"")`, `IF(AND($J$13>0,$H$25=2),1/37+$J$7+$J$8+$H$15/0.03+$J$13,"")`, false, true],
+    [4, '"★ Середина утеплителя ("&ROUND($D$10*500,0)&" мм)"', `ROUND(($D$7+$D$8+$H$15+$D$10/2)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+${rVbR(2)}+$F$10/2`, `1/37+$J$7+$J$8+$H$15/0.03+${rVbRp(2)}+$J$10/2`, true, false],
+    [5, '"Граница: Утеплитель "&\'Ввод_и_Итоги\'!$C$11', `ROUND(($D$7+$D$8+$H$15+$D$10)*1000+${rVbX(2)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+${rVbR(2)}+$F$10`, `1/37+$J$7+$J$8+$H$15/0.03+${rVbRp(2)}+$J$10`],
+    ['ПИ.3', `IF(AND($J$13>0,$H$25=3),${rVbLabel},"(позиция ПИ не здесь — пропуск)")`, `IF(AND($J$13>0,$H$25=3),ROUND(($D$7+$D$8+$H$15+$D$10+$D$13)*1000,1),"")`, `IF(AND($J$13>0,$H$25=3),1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+$F$10+$F$13,"")`, `IF(AND($J$13>0,$H$25=3),1/37+$J$7+$J$8+$H$15/0.03+$J$10+$J$13,"")`, false, true],
+    [6, '"Наружная поверхность покрытия τ_н"', `ROUND(($D$7+$D$8+$H$15+$D$10+$D$11+$D$12)*1000+${rVbX(3)},1)`, `1/'Ввод_и_Итоги'!$C$34+$F$7+$F$8+$H$20+$F$10+$F$11+$F$12+${rVbR(3)}`, `1/37+$J$7+$J$8+$H$15/0.03+$J$10+$J$11+$J$12+${rVbRp(3)}`],
   ];
   roofRibPts.forEach(([idx, nameF, xF, rF, rpF, isMid, isVb], i) => {
     const r = 52 + i; // 52..61
@@ -1985,7 +2107,7 @@ export async function buildCourseworkWorkbook(
     styleFormulaCell(wsRoofMain.getCell(`D${r}`), '0.000');
     wsRoofMain.getCell(`E${r}`).value = { formula: rpF };
     styleFormulaCell(wsRoofMain.getCell(`E${r}`), '0.000');
-    wsRoofMain.getCell(`F${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-$C$25)/${R_roof_rib_exact})*D${r})` };
+    wsRoofMain.getCell(`F${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-$C$22)/${R_roof_rib_exact})*D${r})` };
     styleFormulaCell(wsRoofMain.getCell(`F${r}`), '0.00');
     wsRoofMain.getCell(`G${r}`).value = { formula: `IF(D${r}="","",'Ввод_и_Итоги'!$C$26-(('Ввод_и_Итоги'!$C$26-'Ввод_и_Итоги'!$F$13)/${R_roof_rib_exact})*D${r})` };
     styleFormulaCell(wsRoofMain.getCell(`G${r}`), '0.00', true);
@@ -2014,16 +2136,16 @@ export async function buildCourseworkWorkbook(
   wsRoofMain.getCell('A62').value = 'Воздух нар.';
   styleFormulaCell(wsRoofMain.getCell('A62'), '@', true);
   wsRoofMain.getCell('B62').value = {
-    formula: '"Наружный воздух (зима t_н = "&$C$25&"°C / от. пер. t_н.от = "&\'Ввод_и_Итоги\'!$F$13&"°C)"',
+    formula: '"Наружный воздух (зима t_н = "&$C$22&"°C / от. пер. t_н.от = "&\'Ввод_и_Итоги\'!$F$13&"°C)"',
   };
   styleLabelCell(wsRoofMain.getCell('B62'), true);
-  wsRoofMain.getCell('C62').value = { formula: 'ROUND(($G$8+$G$9+$C$6+$G$12+$C$21+$G$10+$G$11)*1000,1)' };
+  wsRoofMain.getCell('C62').value = { formula: 'ROUND(SUM($D$7:$D$13)*1000,1)' };
   styleFormulaCell(wsRoofMain.getCell('C62'), 'General');
   wsRoofMain.getCell('D62').value = { formula: R_roof_rib_exact };
   styleFormulaCell(wsRoofMain.getCell('D62'), '0.000');
   wsRoofMain.getCell('E62').value = { formula: Rp_roof_rib_exact };
   styleFormulaCell(wsRoofMain.getCell('E62'), '0.000');
-  wsRoofMain.getCell('F62').value = { formula: '$C$25' };
+  wsRoofMain.getCell('F62').value = { formula: '$C$22' };
   styleFormulaCell(wsRoofMain.getCell('F62'), '0.00', true);
   wsRoofMain.getCell('G62').value = { formula: "'Ввод_и_Итоги'!$F$13" };
   styleFormulaCell(wsRoofMain.getCell('G62'), '0.00', true);
@@ -2131,59 +2253,89 @@ export async function buildCourseworkWorkbook(
   // =========================================================================
   styleTitleBanner(
     wsBasement,
-    'A1:G2',
+    'A1:I2',
     'РАСЧЕТ ПЕРЕКРЫТИЯ НАД ТЕХНИЧЕСКИМ ПОДПОЛЬЕМ И ТЕПЛОВОГО БАЛАНСА (ПТП1–ПТП20)',
-    'Подбор утеплителя перекрытия, теплопотери трубопроводов, температурный перепад пола 1 этажа и проверка цокольной стены с интерполяцией точки росы по табл. Е.1'
+    'Все 5 слоев перекрытия + пароизоляция, расчет R_ПТП и сопротивления паропроницанию R_п.ПТП, теплопотери трубопроводов (Прил. О), Δt_п и проверка цокольной стены'
   );
   wsBasement.columns = [
-    { width: 38 }, { width: 14 }, { width: 14 }, { width: 12 },
-    { width: 14 }, { width: 14 }, { width: 22 },
+    { width: 38 }, { width: 15 }, { width: 11 }, { width: 11 },
+    { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 },
+    { width: 12 }, { width: 3 },
   ];
 
-  styleSectionRow(wsBasement, 4, 7, '1. СОСТАВ ПЕРЕКРЫТИЯ ПТП И РАСЧЕТ УТЕПЛИТЕЛЯ');
+  styleSectionRow(wsBasement, 4, 9, '1. СОСТАВ ПЕРЕКРЫТИЯ ПТП, РАСЧЕТ УТЕПЛИТЕЛЯ И ПАРОПРОНИЦАНИЯ R_п.ПТП');
   wsBasement.getCell('A5').value = 'Шифр ПТП:';
   styleLabelCell(wsBasement.getCell('A5'), true);
   wsBasement.getCell('B5').value = { formula: "'Ввод_и_Итоги'!$C$10" };
   styleFormulaCell(wsBasement.getCell('B5'), '@', true, true);
-  wsBasement.mergeCells('C5:G5');
+  wsBasement.mergeCells('C5:I5');
   wsBasement.getCell('C5').value = {
     formula: `INDEX('Справ_Конструкции'!$C$${baseStartRow}:$C$${baseEndRow},MATCH($B$5,'Справ_Конструкции'!$A$${baseStartRow}:$A$${baseEndRow},0))`,
   };
   styleFormulaCell(wsBasement.getCell('C5'), '@', true);
   wsBasement.getCell('C5').alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-  styleTableHeader(wsBasement, 6, ['Наименование слоя', 'Мат.ID', 'δ, м', 'λ', 'R_i', 's_i', 'R_п.i']);
+  styleTableHeader(wsBasement, 6, ['Наименование слоя', 'Код мат.', 'δ, м', 'λ', 'R_i', 's_i', 'D_i', 'μ', 'R_п.i']);
   const baseColTriplets: [string, string, string][] = [
-    ['E', 'F', 'G'], ['H', 'I', 'J'], ['K', 'L', 'M'], ['N', 'O', 'P'],
+    ['E', 'F', 'G'], ['H', 'I', 'J'], ['K', 'L', 'M'], ['N', 'O', 'P'], ['Q', 'R', 'S'],
   ];
   baseColTriplets.forEach(([cN, cM, cD], idx) => {
-    const r = 7 + idx; // 7..10
+    const r = 7 + idx; // 7..11 (все 5 слоев!)
     wsBasement.getRow(r).height = 20;
     const fName = `INDEX('Справ_Конструкции'!$${cN}$${baseStartRow}:$${cN}$${baseEndRow},MATCH($B$5,'Справ_Конструкции'!$A$${baseStartRow}:$A$${baseEndRow},0))`;
     const fMat = `INDEX('Справ_Конструкции'!$${cM}$${baseStartRow}:$${cM}$${baseEndRow},MATCH($B$5,'Справ_Конструкции'!$A$${baseStartRow}:$A$${baseEndRow},0))`;
     const fThk = `INDEX('Справ_Конструкции'!$${cD}$${baseStartRow}:$${cD}$${baseEndRow},MATCH($B$5,'Справ_Конструкции'!$A$${baseStartRow}:$A$${baseEndRow},0))`;
-    wsBasement.getCell(`A${r}`).value = { formula: `IF(${fMat}="INSULATION","Утеплитель "&'Ввод_и_Итоги'!$C$11,${fName})` };
+    wsBasement.getCell(`A${r}`).value = { formula: `IF(B${r}="","(нет слоя)",IF(B${r}="INSULATION","Утеплитель "&'Ввод_и_Итоги'!$C$11,${fName}))` };
     styleLabelCell(wsBasement.getCell(`A${r}`));
     wsBasement.getCell(`B${r}`).value = { formula: fMat };
     styleFormulaCell(wsBasement.getCell(`B${r}`), '@');
-    wsBasement.getCell(`C${r}`).value = { formula: `IF(B${r}="",0,IF(B${r}="INSULATION",$C$13,${fThk}))` };
+    wsBasement.getCell(`C${r}`).value = { formula: `IF(B${r}="",0,IF(B${r}="INSULATION",$C$15,${fThk}))` };
     styleFormulaCell(wsBasement.getCell(`C${r}`), '0.000');
     wsBasement.getCell(`D${r}`).value = {
       formula: `IF(B${r}="",0,IF(B${r}="INSULATION",'Ввод_и_Итоги'!$F$33,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$E$2:$E$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$F$2:$F$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)))))`,
     };
-    styleFormulaCell(wsBasement.getCell(`D${r}`), '0.000');
+    styleFormulaCell(wsBasement.getCell(`D${r}`), '0.0000');
     wsBasement.getCell(`E${r}`).value = { formula: `IF(D${r}>0,ROUND(C${r}/D${r},4),0)` };
     styleFormulaCell(wsBasement.getCell(`E${r}`), '0.000');
     wsBasement.getCell(`F${r}`).value = {
       formula: `IF(B${r}="",0,IF(B${r}="INSULATION",'Ввод_и_Итоги'!$F$34,IF('Ввод_и_Итоги'!$C$33="А",INDEX('Справ_Материалы'!$G$2:$G$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)),INDEX('Справ_Материалы'!$H$2:$H$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0)))))`,
     };
     styleFormulaCell(wsBasement.getCell(`F${r}`), '0.00');
-    const baseMuLookup = `INDEX('Справ_Материалы'!$I$2:$I$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))`;
-    wsBasement.getCell(`G${r}`).value = {
-      formula: `IF(B${r}="",0,IF(B${r}="INSULATION",IF('Ввод_и_Итоги'!$F$35>0,ROUND(C${r}/'Ввод_и_Итоги'!$F$35,3),0),IF(${baseMuLookup}>0,ROUND(C${r}/${baseMuLookup},3),0)))`,
-    };
+    wsBasement.getCell(`G${r}`).value = { formula: `ROUND(E${r}*F${r},3)` };
     styleFormulaCell(wsBasement.getCell(`G${r}`), '0.000');
+    wsBasement.getCell(`H${r}`).value = {
+      formula: `IF(B${r}="",0,IF(B${r}="INSULATION",'Ввод_и_Итоги'!$F$35,INDEX('Справ_Материалы'!$I$2:$I$${matEndRow},MATCH(B${r},'Справ_Материалы'!$A$2:$A$${matEndRow},0))))`,
+    };
+    styleFormulaCell(wsBasement.getCell(`H${r}`), '0.000');
+    wsBasement.getCell(`I${r}`).value = {
+      formula: `IF(H${r}>0,ROUND(C${r}/H${r},3),0)`,
+    };
+    styleFormulaCell(wsBasement.getCell(`I${r}`), '0.000');
   });
+
+  // Строка 12: Пароизоляция перекрытия ПТП (редактируемые параметры при наличии)
+  const bVb = calc.basement.vaporBarrier;
+  wsBasement.getRow(12).height = 20;
+  wsBasement.getCell('A12').value = bVb
+    ? `Пароизоляция: ${bVb.name}`
+    : 'Пароизоляция ПТП (не задана — введите R_п в I12 при необходимости)';
+  styleLabelCell(wsBasement.getCell('A12'), Boolean(bVb));
+  wsBasement.getCell('B12').value = bVb ? 'ПАРОИЗОЛ.' : '';
+  styleFormulaCell(wsBasement.getCell('B12'), '@', Boolean(bVb));
+  wsBasement.getCell('C12').value = bVb ? +(bVb.thicknessMm / 1000).toFixed(4) : 0;
+  styleInputCell(wsBasement.getCell('C12'), '0.0000');
+  wsBasement.getCell('D12').value = bVb ? (bVb.lambda ?? 0.2) : 0;
+  styleInputCell(wsBasement.getCell('D12'), '0.00');
+  wsBasement.getCell('E12').value = { formula: 'IF(AND(C12>0,D12>0),ROUND(C12/D12,4),0)' };
+  styleFormulaCell(wsBasement.getCell('E12'), '0.0000');
+  wsBasement.getCell('F12').value = bVb ? (bVb.s ?? 4.0) : 0;
+  styleInputCell(wsBasement.getCell('F12'), '0.0');
+  wsBasement.getCell('G12').value = { formula: 'ROUND(E12*F12,3)' };
+  styleFormulaCell(wsBasement.getCell('G12'), '0.000');
+  wsBasement.getCell('H12').value = { formula: 'IF(I12>0,C12/I12,0)' };
+  styleFormulaCell(wsBasement.getCell('H12'), '0.00000');
+  wsBasement.getCell('I12').value = bVb ? bVb.R_p : 0;
+  styleInputCell(wsBasement.getCell('I12'), '0.000');
 
   const baseNonInsRTerms = baseColTriplets
     .map(([, , cD], idx) => {
@@ -2194,22 +2346,23 @@ export async function buildCourseworkWorkbook(
     .join('+');
 
   const MAX_EXCEL_PIPE_SLOTS = Math.max(18, calc.basement.pipesDetails.length + 5);
-  const baseCalcRows: [number, string, string | number, string, boolean, boolean][] = [
-    [11, 'Нормативное сопротивление перекрытия R_норм.ПТП', "'Ввод_и_Итоги'!$F$28", '0.00', true, false],
-    [12, 'Расчетная толщина утеплителя δ_ут.расч, м', `ROUND((C11-(1/8.7+1/17+${baseNonInsRTerms}))*'Ввод_и_Итоги'!$F$33,3)`, '0.000', false, false],
-    [13, 'Принятая толщина утеплителя δ_ут.прин, м', 'MAX(0.05,ROUNDUP(C12,2))', '0.00', true, true],
-    [14, 'Фактическое сопротивление перекрытия R_ПТП, м²·°C/Вт', 'ROUND(1/8.7+SUM(E7:E10)+1/17,2)', '0.00', true, true],
-    [15, 'Температура воздуха в подполье t_п, °C (редактируемая)', calc.basement.crawlSpaceTemp_t_p, '0.0', true, false],
-    [16, 'Относительная влажность в подполье φ_п, % (редактируемая)', calc.basement.crawlSpaceRH, '0', false, false],
-    [17, 'Точка росы в техподполье t_р.п, °C (интерп. Е.1)', excelInterpDewPoint(`(C16/100)*${excelInterpE('C15', e1EndRow)}`, e1EndRow), '0.00', false, false],
-    [18, 'Температурный перепад на полу 1 этажа Δt_п, °C', `ROUND(('Ввод_и_Итоги'!$C$26-C15)/(C14*8.7),2)`, '0.00', true, false],
-    [19, 'Температура поверхности пола 1 этажа τ_в.пол, °C', `ROUND('Ввод_и_Итоги'!$C$26-C18,2)`, '0.00', true, false],
-    [20, 'Температура внутренней поверхности цокольной стены τ_в.цок, °C', `ROUND(C15-(C15-'Ввод_и_Итоги'!$F$13)/(1.25*17),2)`, '0.00', false, false],
-    [21, 'Суммарные тепловыделения от трубопроводов ΣQ_тр, Вт', `ROUND(SUM(F26:F${25 + MAX_EXCEL_PIPE_SLOTS}),1)`, '0.0', true, false],
-    [22, 'Заключение по техническому подполью', `IF(AND(C14>=C11,C18<=INDEX('Справ_ТипыЗданий'!$I$2:$I$${bTypesEndRow},MATCH('Ввод_и_Итоги'!$C$5,'Справ_ТипыЗданий'!$B$2:$B$${bTypesEndRow},0)),C20>C17),"СООТВЕТСТВУЕТ ✓","ПРОВЕРИТЬ ✗")`, '@', true, true],
+  const baseCalcRows: [number, string, string | number, string, string, boolean, boolean][] = [
+    [13, 'Нормативное сопротивление перекрытия R_норм.ПТП', "'Ввод_и_Итоги'!$F$28", '0.00', 'м²·°C/Вт', true, false],
+    [14, 'Расчетная толщина утеплителя δ_ут.расч, м', `ROUND((C13-(1/8.7+1/17+${baseNonInsRTerms}+E12))*'Ввод_и_Итоги'!$F$33,3)`, '0.000', 'м', false, false],
+    [15, 'Принятая толщина утеплителя δ_ут.прин, м', 'MAX(0.05,ROUNDUP(C14,2))', '0.00', 'м', true, true],
+    [16, 'Фактическое сопротивление перекрытия R_ПТП, м²·°C/Вт', 'ROUND(1/8.7+SUM(E7:E12)+1/17,2)', '0.00', 'м²·°C/Вт', true, true],
+    [17, 'Суммарное сопротивление паропроницанию R_п.ПТП = 1/37 + ΣR_п.i + 1/77', 'ROUND(1/37+SUM(I7:I12)+1/77,2)', '0.00', 'м²·ч·Па/мг', true, true],
+    [18, 'Температура воздуха в подполье t_п, °C (редактируемая)', calc.basement.crawlSpaceTemp_t_p, '0.0', '°C', true, false],
+    [19, 'Относительная влажность в подполье φ_п, % (редактируемая)', calc.basement.crawlSpaceRH, '0', '%', false, false],
+    [20, 'Точка росы в техподполье t_р.п, °C (интерп. Е.1)', excelInterpDewPoint(`(C19/100)*${excelInterpE('C18', e1EndRow)}`, e1EndRow), '0.00', '°C', false, false],
+    [21, 'Температурный перепад на полу 1 этажа Δt_п, °C', `ROUND(('Ввод_и_Итоги'!$C$26-C18)/(C16*8.7),2)`, '0.00', '°C', true, false],
+    [22, 'Температура поверхности пола 1 этажа τ_в.пол, °C', `ROUND('Ввод_и_Итоги'!$C$26-C21,2)`, '0.00', '°C', true, false],
+    [23, 'Температура внутренней поверхности цокольной стены τ_в.цок, °C', `ROUND(C18-(C18-'Ввод_и_Итоги'!$F$13)/(1.25*17),2)`, '0.00', '°C', false, false],
+    [24, 'Суммарные тепловыделения от трубопроводов ΣQ_тр, Вт', `ROUND(SUM(F29:F${28 + MAX_EXCEL_PIPE_SLOTS}),1)`, '0.0', 'Вт', true, false],
+    [25, 'Заключение по техническому подполью', `IF(AND(C16>=C13,C21<=INDEX('Справ_ТипыЗданий'!$I$2:$I$${bTypesEndRow},MATCH('Ввод_и_Итоги'!$C$5,'Справ_ТипыЗданий'!$B$2:$B$${bTypesEndRow},0)),C23>C20),"СООТВЕТСТВУЕТ ✓","ПРОВЕРИТЬ ✗")`, '@', 'СП 2.04.01-2020', true, true],
   ];
 
-  baseCalcRows.forEach(([r, lbl, valOrF, fmt, bold, accent]) => {
+  baseCalcRows.forEach(([r, lbl, valOrF, fmt, unit, bold, accent]) => {
     wsBasement.getRow(r).height = 20;
     wsBasement.mergeCells(`A${r}:B${r}`);
     wsBasement.getCell(`A${r}`).value = lbl;
@@ -2222,16 +2375,19 @@ export async function buildCourseworkWorkbook(
       cCell.value = { formula: valOrF };
       styleFormulaCell(cCell, fmt, bold, accent);
     }
+    wsBasement.mergeCells(`D${r}:E${r}`);
+    wsBasement.getCell(`D${r}`).value = unit;
+    styleLabelCell(wsBasement.getCell(`D${r}`));
   });
 
-  // Справа на строках 7..19 (I7:Q19): Справочная таблица Приложения О (Шибеко стр. 108) для точного выбора q_i^5 (Вт/м)
-  wsBasement.mergeCells('I5:Q5');
-  wsBasement.getCell('I5').value = 'Приложение О (Шибеко 2018, стр. 108): линейная плотность теплового потока q_i^5, Вт/м';
-  wsBasement.getCell('I5').font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-  wsBasement.getCell('I5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.slateSubHeader } };
-  wsBasement.getCell('I5').alignment = { vertical: 'middle', horizontal: 'center' };
+  // Справа на строках 5..19 (K5:S19): Справочная таблица Приложения О (Шибеко стр. 108) для точного выбора q_i^5 (Вт/м)
+  wsBasement.mergeCells('K5:S5');
+  wsBasement.getCell('K5').value = 'Приложение О (Шибеко 2018, стр. 108): линейная плотность теплового потока q_i^5, Вт/м';
+  wsBasement.getCell('K5').font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
+  wsBasement.getCell('K5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.slateSubHeader } };
+  wsBasement.getCell('K5').alignment = { vertical: 'middle', horizontal: 'center' };
   const appOTemps = [50, 60, 70, 80, 90, 95, 100, 105];
-  styleTableHeader(wsBasement, 6, ['d_у, мм', '50°C', '60°C', '70°C', '80°C', '90°C', '95°C', '100°C', '105°C'], 9);
+  styleTableHeader(wsBasement, 6, ['d_у, мм', '50°C', '60°C', '70°C', '80°C', '90°C', '95°C', '100°C', '105°C'], 11);
   const appODys = [10, 15, 20, 25, 32, 40, 50, 65, 70, 80, 100, 125, 150];
   const appOQTable: Record<number, number[]> = {
     10: [11, 12, 14, 15, 17, 17.5, 18, 19],
@@ -2249,25 +2405,26 @@ export async function buildCourseworkWorkbook(
     150: [40, 46, 51, 57, 63, 66, 69, 72],
   };
   appOTemps.forEach((tVal, cIdx) => {
-    wsBasement.getCell(6, 10 + cIdx).value = tVal;
-    styleFormulaCell(wsBasement.getCell(6, 10 + cIdx), '0"°C"', true);
+    wsBasement.getCell(6, 12 + cIdx).value = tVal;
+    styleFormulaCell(wsBasement.getCell(6, 12 + cIdx), '0"°C"', true);
   });
   appODys.forEach((dVal, rIdx) => {
     const rr = 7 + rIdx; // 7..19
-    wsBasement.getCell(rr, 9).value = dVal;
-    styleFormulaCell(wsBasement.getCell(rr, 9), '0', true);
+    wsBasement.getCell(rr, 11).value = dVal;
+    styleFormulaCell(wsBasement.getCell(rr, 11), '0', true);
     appOQTable[dVal].forEach((qVal, cIdx) => {
-      wsBasement.getCell(rr, 10 + cIdx).value = qVal;
-      styleFormulaCell(wsBasement.getCell(rr, 10 + cIdx), '0.0');
+      wsBasement.getCell(rr, 12 + cIdx).value = qVal;
+      styleFormulaCell(wsBasement.getCell(rr, 12 + cIdx), '0.0');
     });
   });
 
-  styleSectionRow(wsBasement, 24, 7, '2. ТЕПЛОПОТЕРИ ТРУБОПРОВОДОВ В ТЕХПОДПОЛЬЕ (18 УЧАСТКОВ — РЕДАКТИРУЕМЫЕ ЖЕЛТЫЕ ЯЧЕЙКИ, ПРИЛ. О ШИБЕКО)');
-  styleTableHeader(wsBasement, 25, [
+  styleSectionRow(wsBasement, 27, 9, `2. ТЕПЛОПОТЕРИ ТРУБОПРОВОДОВ В ТЕХПОДПОЛЬЕ (${MAX_EXCEL_PIPE_SLOTS} УЧАСТКОВ — РЕДАКТИРУЕМЫЕ ЖЕЛТЫЕ ЯЧЕЙКИ, ПРИЛ. О ШИБЕКО)`);
+  styleTableHeader(wsBasement, 28, [
     'Назначение / № участка', 't_т, °C', 'd_у, мм', 'Длина l_i, м', 'q_i^5, Вт/м (Прил. О)', 'Q_i = q_i^5·l_i, Вт', 'Примечание',
   ]);
+  wsBasement.mergeCells('G28:I28');
   for (let idx = 0; idx < MAX_EXCEL_PIPE_SLOTS; idx++) {
-    const r = 26 + idx; // 26..43
+    const r = 29 + idx; // 29..46+
     const p = calc.basement.pipesDetails[idx];
     wsBasement.getRow(r).height = 19;
     wsBasement.getCell(`A${r}`).value = p
@@ -2281,11 +2438,12 @@ export async function buildCourseworkWorkbook(
     wsBasement.getCell(`D${r}`).value = p ? p.length : null;
     styleInputCell(wsBasement.getCell(`D${r}`), '0.0');
     wsBasement.getCell(`E${r}`).value = {
-      formula: `IF(OR(B${r}="",C${r}="",D${r}="",D${r}<=0),0,IFERROR(INDEX($J$7:$Q$19,MATCH(C${r},$I$7:$I$19,1),MATCH(B${r},$J$6:$Q$6,1)),ROUND(0.28*(C${r}/50)*(B${r}-5)+3.5,1)))`,
+      formula: `IF(OR(B${r}="",C${r}="",D${r}="",D${r}<=0),0,IFERROR(INDEX($L$7:$S$19,MATCH(C${r},$K$7:$K$19,1),MATCH(B${r},$L$6:$S$6,1)),ROUND(0.28*(C${r}/50)*(B${r}-5)+3.5,1)))`,
     };
     styleFormulaCell(wsBasement.getCell(`E${r}`), '0.0');
     wsBasement.getCell(`F${r}`).value = { formula: `IF(OR(D${r}="",D${r}<=0),0,ROUND(E${r}*D${r},1))` };
     styleFormulaCell(wsBasement.getCell(`F${r}`), '0.0', true);
+    wsBasement.mergeCells(`G${r}:I${r}`);
     wsBasement.getCell(`G${r}`).value = {
       formula: `IF(F${r}>0,"Учтен в тепловом балансе","Свободный слот")`,
     };
@@ -2464,7 +2622,10 @@ export async function buildCourseworkWorkbook(
   wsWindows.getCell('H44').value = { formula: 'ROUND(SUM(H31:H43),1)' };
   styleFormulaCell(wsWindows.getCell('H44'), '0.0', true);
   wsWindows.mergeCells('I44:K44');
-  wsWindows.getCell('I44').value = { formula: `"R_т.ок = "&TEXT(F44,"0.00")&" м²·°C/Вт"` };
+  wsWindows.getCell('I44').value = {
+    formula: `"R_т.ок = "&ROUND(F44,2)&" м²·°C/Вт"`,
+    result: `R_т.ок = ${calc.window.R_actual.toFixed(2).replace('.', ',')} м²·°C/Вт`,
+  };
   styleFormulaCell(wsWindows.getCell('I44'), '@', true, true);
 
   wsWindows.getRow(45).height = 19;
@@ -2569,7 +2730,7 @@ export async function buildCourseworkWorkbook(
     wsWindows.getCell(`D${r}`).value = { formula: `IF(A${r}="","",ROUND(1.2*B${r},3))` };
     styleFormulaCell(wsWindows.getCell(`D${r}`), '0.000');
     wsWindows.getCell(`E${r}`).value = {
-      formula: `IF(A${r}="","",TEXT(C${r},"0.000")&" – "&TEXT(D${r},"0.000"))`,
+      formula: `IF(A${r}="","",ROUND(C${r},3)&" – "&ROUND(D${r},3))`,
     };
     styleFormulaCell(wsWindows.getCell(`E${r}`), '@', true);
     wsWindows.mergeCells(`F${r}:K${r}`);
@@ -3249,10 +3410,10 @@ function populateReportTablesSheet(
   styleResultCell(ws.getCell(`F${r}`), '@', 'center');
   ws.getCell(`G${r}`).value = '—';
   styleResultCell(ws.getCell(`G${r}`), '@', 'center');
-  ws.getCell(`H${r}`).value = { formula: '"R₀ = "&TEXT(Стена_Расчет!C16,"0.000")' };
+  ws.getCell(`H${r}`).value = { formula: '"R₀ = "&ROUND(Стена_Расчет!C16,3)' };
   styleResultCell(ws.getCell(`H${r}`), '@', 'center');
   ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: '"Rп = "&TEXT(Стена_Расчет!C21,"0.000")' };
+  ws.getCell(`I${r}`).value = { formula: '"Rп = "&ROUND(Стена_Расчет!C21,3)' };
   styleResultCell(ws.getCell(`I${r}`), '@', 'center');
   r += 2;
 
@@ -3389,63 +3550,50 @@ function populateReportTablesSheet(
   });
   r++;
 
-  // 1: Штукатурка
-  ws.getRow(r).height = 20;
-  ws.getCell(`A${r}`).value = '1';
-  styleFormulaCell(ws.getCell(`A${r}`), '@', 'center');
-  ws.getCell(`B${r}`).value = { formula: 'Покрытие_Расчет!E8' };
-  styleFormulaCell(ws.getCell(`B${r}`), '@', 'left');
-  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!G8' };
-  styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right');
-  ws.getCell(`D${r}`).value = {
-    formula: `IFERROR(INDEX('Справ_Материалы'!$C$2:$C$${ctx.matEndRow},MATCH(Покрытие_Расчет!F8,'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0)),1800)`,
-  };
-  styleFormulaCell(ws.getCell(`D${r}`), '0', 'right');
-  ws.getCell(`E${r}`).value = { formula: 'Покрытие_Расчет!H8' };
-  styleFormulaCell(ws.getCell(`E${r}`), '0.00', 'right');
-  ws.getCell(`F${r}`).value = { formula: 'Покрытие_Расчет!J8' };
-  styleFormulaCell(ws.getCell(`F${r}`), '0.00', 'right');
-  ws.getCell(`G${r}`).value = {
-    formula: `INDEX('Справ_Материалы'!$I$2:$I$${ctx.matEndRow},MATCH(Покрытие_Расчет!F8,'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0))`,
-  };
-  styleFormulaCell(ws.getCell(`G${r}`), '0.0000', 'right');
-  ws.getCell(`H${r}`).value = { formula: 'Покрытие_Расчет!I8' };
-  styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right');
-  ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: 'Покрытие_Расчет!K8' };
-  styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right');
-  r++;
+  // Слои 1..6 + ПИ покрытия из единой таблицы Покрытие_Расчет!A7:K13 (аналогично Стена_Расчет!)
+  for (let srcRow = 7; srcRow <= 13; srcRow++) {
+    const isSlab = srcRow === 9;
+    const isIns = srcRow === 10;
+    const isVb = srcRow === 13;
+    const isBoldRow = isSlab || isIns || isVb;
+    ws.getRow(r).height = 20;
+    ws.getCell(`A${r}`).value = { formula: `Покрытие_Расчет!A${srcRow}` };
+    styleFormulaCell(ws.getCell(`A${r}`), '@', 'center', isBoldRow);
+    ws.getCell(`B${r}`).value = { formula: `Покрытие_Расчет!B${srcRow}` };
+    styleFormulaCell(ws.getCell(`B${r}`), '@', 'left', isBoldRow);
+    ws.getCell(`C${r}`).value = { formula: `Покрытие_Расчет!D${srcRow}` };
+    styleFormulaCell(ws.getCell(`C${r}`), isVb ? '0.0000' : '0.000', 'right', isBoldRow);
+    ws.getCell(`D${r}`).value = isSlab
+      ? 2500
+      : isIns
+      ? { formula: "'Ввод_и_Итоги'!$F$32" }
+      : isVb
+      ? '—'
+      : {
+          formula: `IF(Покрытие_Расчет!C${srcRow}="","—",IFERROR(INDEX('Справ_Материалы'!$C$2:$C$${ctx.matEndRow},MATCH(Покрытие_Расчет!C${srcRow},'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0)),"—"))`,
+        };
+    styleFormulaCell(ws.getCell(`D${r}`), isVb ? '@' : '0', isVb ? 'center' : 'right');
+    ws.getCell(`E${r}`).value = { formula: `Покрытие_Расчет!E${srcRow}` };
+    styleFormulaCell(ws.getCell(`E${r}`), isIns ? '0.0000' : '0.00', 'right');
+    ws.getCell(`F${r}`).value = { formula: `Покрытие_Расчет!G${srcRow}` };
+    styleFormulaCell(ws.getCell(`F${r}`), '0.00', 'right');
+    ws.getCell(`G${r}`).value = { formula: `Покрытие_Расчет!I${srcRow}` };
+    styleFormulaCell(ws.getCell(`G${r}`), isVb ? '0.00000' : '0.0000', 'right');
+    ws.getCell(`H${r}`).value = { formula: `Покрытие_Расчет!F${srcRow}` };
+    styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right', isBoldRow);
+    ws.mergeCells(`I${r}:K${r}`);
+    ws.getCell(`I${r}`).value = { formula: `Покрытие_Расчет!J${srcRow}` };
+    styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right', isBoldRow);
+    r++;
+  }
 
-  // 2.1: Плита ж/б (ребро)
+  // Справочная строка воздушной прослойки многопустотной плиты (R_в.п = 0,15, R_п.возд = 0 по СП 2.04.01 п. 10.5)
   ws.getRow(r).height = 20;
-  ws.getCell(`A${r}`).value = '2.1';
+  ws.getCell(`A${r}`).value = '3.а';
   styleFormulaCell(ws.getCell(`A${r}`), '@', 'center');
-  ws.getCell(`B${r}`).value = 'Железобетонная многопустотная плита (сечение по ребрам)';
+  ws.getCell(`B${r}`).value = 'в т.ч. воздушная прослойка плиты (пустота d, R_в.п = 0,15, R_п.возд = 0)';
   styleFormulaCell(ws.getCell(`B${r}`), '@', 'left');
-  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!C6' };
-  styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right');
-  ws.getCell(`D${r}`).value = 2500;
-  styleFormulaCell(ws.getCell(`D${r}`), '0', 'right');
-  ws.getCell(`E${r}`).value = { formula: 'Покрытие_Расчет!C9' };
-  styleFormulaCell(ws.getCell(`E${r}`), '0.00', 'right');
-  ws.getCell(`F${r}`).value = { formula: `IF('Ввод_и_Итоги'!$C$33="А",17.98,19.4)` };
-  styleFormulaCell(ws.getCell(`F${r}`), '0.00', 'right');
-  ws.getCell(`G${r}`).value = 0.03;
-  styleFormulaCell(ws.getCell(`G${r}`), '0.0000', 'right');
-  ws.getCell(`H${r}`).value = { formula: 'Покрытие_Расчет!C13' };
-  styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right');
-  ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: 'ROUND(Покрытие_Расчет!C6/0.03,3)' };
-  styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right');
-  r++;
-
-  // 2.2: Плита ж/б (пустота)
-  ws.getRow(r).height = 20;
-  ws.getCell(`A${r}`).value = '2.2';
-  styleFormulaCell(ws.getCell(`A${r}`), '@', 'center');
-  ws.getCell(`B${r}`).value = 'Воздушная прослойка плиты (сечение по пустоте, R_в.п = 0,15, R_п = 0)';
-  styleFormulaCell(ws.getCell(`B${r}`), '@', 'left');
-  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!C7' };
+  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!H16' };
   styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right');
   ws.getCell(`D${r}`).value = '—';
   styleFormulaCell(ws.getCell(`D${r}`), '@', 'center');
@@ -3462,100 +3610,25 @@ function populateReportTablesSheet(
   styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right');
   r++;
 
-  // 3..4: Слои 9..10 из Покрытие_Расчет
-  for (let sRow = 9; sRow <= 10; sRow++) {
-    ws.getRow(r).height = 20;
-    ws.getCell(`A${r}`).value = `${sRow - 6}`;
-    styleFormulaCell(ws.getCell(`A${r}`), '@', 'center');
-    ws.getCell(`B${r}`).value = { formula: `Покрытие_Расчет!E${sRow}` };
-    styleFormulaCell(ws.getCell(`B${r}`), '@', 'left');
-    ws.getCell(`C${r}`).value = { formula: `Покрытие_Расчет!G${sRow}` };
-    styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right');
-    ws.getCell(`D${r}`).value = {
-      formula: `IFERROR(INDEX('Справ_Материалы'!$C$2:$C$${ctx.matEndRow},MATCH(Покрытие_Расчет!F${sRow},'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0)),"")`,
-    };
-    styleFormulaCell(ws.getCell(`D${r}`), '0', 'right');
-    ws.getCell(`E${r}`).value = { formula: `Покрытие_Расчет!H${sRow}` };
-    styleFormulaCell(ws.getCell(`E${r}`), '0.00', 'right');
-    ws.getCell(`F${r}`).value = { formula: `Покрытие_Расчет!J${sRow}` };
-    styleFormulaCell(ws.getCell(`F${r}`), '0.00', 'right');
-    ws.getCell(`G${r}`).value = {
-      formula: `INDEX('Справ_Материалы'!$I$2:$I$${ctx.matEndRow},MATCH(Покрытие_Расчет!F${sRow},'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0))`,
-    };
-    styleFormulaCell(ws.getCell(`G${r}`), '0.0000', 'right');
-    ws.getCell(`H${r}`).value = { formula: `Покрытие_Расчет!I${sRow}` };
-    styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right');
-    ws.mergeCells(`I${r}:K${r}`);
-    ws.getCell(`I${r}`).value = { formula: `Покрытие_Расчет!K${sRow}` };
-    styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right');
-    r++;
-  }
-
-  // Слой утеплителя покрытия
-  ws.getRow(r).height = 20;
-  ws.getCell(`A${r}`).value = 'Ут';
-  styleFormulaCell(ws.getCell(`A${r}`), '@', 'center', true);
-  ws.getCell(`B${r}`).value = { formula: `"Утеплитель "&'Ввод_и_Итоги'!$C$11&" ("&'Ввод_и_Итоги'!$F$31&")"` };
-  styleFormulaCell(ws.getCell(`B${r}`), '@', 'left', true);
-  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!C21' };
-  styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right', true);
-  ws.getCell(`D${r}`).value = { formula: "'Ввод_и_Итоги'!$F$32" };
-  styleFormulaCell(ws.getCell(`D${r}`), '0', 'right');
-  ws.getCell(`E${r}`).value = { formula: "'Ввод_и_Итоги'!$F$33" };
-  styleFormulaCell(ws.getCell(`E${r}`), '0.0000', 'right');
-  ws.getCell(`F${r}`).value = { formula: "'Ввод_и_Итоги'!$F$34" };
-  styleFormulaCell(ws.getCell(`F${r}`), '0.00', 'right');
-  ws.getCell(`G${r}`).value = { formula: "'Ввод_и_Итоги'!$F$35" };
-  styleFormulaCell(ws.getCell(`G${r}`), '0.0000', 'right');
-  ws.getCell(`H${r}`).value = { formula: `Покрытие_Расчет!C21/'Ввод_и_Итоги'!$F$33` };
-  styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right', true);
-  ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: `Покрытие_Расчет!C21/'Ввод_и_Итоги'!$F$35` };
-  styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right', true);
-  r++;
-
-  // Слой пароизоляции покрытия
-  ws.getRow(r).height = 20;
-  ws.getCell(`A${r}`).value = 'ПИ';
-  styleFormulaCell(ws.getCell(`A${r}`), '@', 'center', true);
-  ws.getCell(`B${r}`).value = { formula: `Покрытие_Расчет!E12` };
-  styleFormulaCell(ws.getCell(`B${r}`), '@', 'left', true);
-  ws.getCell(`C${r}`).value = { formula: `Покрытие_Расчет!G12` };
-  styleFormulaCell(ws.getCell(`C${r}`), '0.0000', 'right');
-  ws.getCell(`D${r}`).value = '—';
-  styleFormulaCell(ws.getCell(`D${r}`), '@', 'center');
-  ws.getCell(`E${r}`).value = { formula: `Покрытие_Расчет!H12` };
-  styleFormulaCell(ws.getCell(`E${r}`), '0.00', 'right');
-  ws.getCell(`F${r}`).value = { formula: `Покрытие_Расчет!J12` };
-  styleFormulaCell(ws.getCell(`F${r}`), '0.0', 'right');
-  ws.getCell(`G${r}`).value = '—';
-  styleFormulaCell(ws.getCell(`G${r}`), '@', 'center');
-  ws.getCell(`H${r}`).value = { formula: `Покрытие_Расчет!I12` };
-  styleFormulaCell(ws.getCell(`H${r}`), '0.0000', 'right');
-  ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: `Покрытие_Расчет!K12` };
-  styleFormulaCell(ws.getCell(`I${r}`), '0.000', 'right', true);
-  r++;
-
-  // Итого по покрытию
+  // Итого по покрытию (с отображением R_п по пустоте и по ребру, без локалезависимого TEXT)
   ws.getRow(r).height = 24;
   ws.mergeCells(`A${r}:B${r}`);
   ws.getCell(`A${r}`).value = 'Итого по покрытию (R_0, R_0^пуст, D_пуст, R_п):';
   styleResultCell(ws.getCell(`A${r}`), '@', 'right');
-  ws.getCell(`C${r}`).value = { formula: 'Покрытие_Расчет!C6+SUM(Покрытие_Расчет!G8:G12)+Покрытие_Расчет!C21' };
+  ws.getCell(`C${r}`).value = { formula: 'SUM(Покрытие_Расчет!D7:D13)' };
   styleResultCell(ws.getCell(`C${r}`), '0.000');
   ws.getCell(`D${r}`).value = '—';
   styleResultCell(ws.getCell(`D${r}`), '@', 'center');
-  ws.getCell(`E${r}`).value = { formula: '"R₀ = "&TEXT(Покрытие_Расчет!C22,"0.000")' };
+  ws.getCell(`E${r}`).value = { formula: '"R₀ = "&ROUND(Покрытие_Расчет!C19,3)' };
   styleResultCell(ws.getCell(`E${r}`), '@', 'center');
-  ws.getCell(`F${r}`).value = { formula: '"R₀.пуст = "&TEXT(Покрытие_Расчет!C23,"0.000")' };
+  ws.getCell(`F${r}`).value = { formula: '"R₀.пуст = "&ROUND(Покрытие_Расчет!C20,3)' };
   styleResultCell(ws.getCell(`F${r}`), '@', 'center');
-  ws.getCell(`G${r}`).value = { formula: '"Dпуст = "&TEXT(Покрытие_Расчет!C24,"0.00")' };
+  ws.getCell(`G${r}`).value = { formula: '"Dпуст = "&ROUND(Покрытие_Расчет!C21,2)' };
   styleResultCell(ws.getCell(`G${r}`), '@', 'center');
-  ws.getCell(`H${r}`).value = '—';
+  ws.getCell(`H${r}`).value = { formula: '"Rп.реб = "&ROUND(Покрытие_Расчет!C25,2)' };
   styleResultCell(ws.getCell(`H${r}`), '@', 'center');
   ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: '"Rп = "&TEXT(Покрытие_Расчет!C27,"0.000")' };
+  ws.getCell(`I${r}`).value = { formula: '"Rп.пуст = "&ROUND(Покрытие_Расчет!C24,2)' };
   styleResultCell(ws.getCell(`I${r}`), '@', 'center');
   r += 2;
 
@@ -3697,7 +3770,7 @@ function populateReportTablesSheet(
   r++;
 
   calc.basement.pipesDetails.forEach((p, idx) => {
-    const srcRow = 26 + idx;
+    const srcRow = 29 + idx;
     ws.getRow(r).height = 20;
     ws.getCell(`A${r}`).value = idx + 1;
     styleFormulaCell(ws.getCell(`A${r}`), '0', 'center');
@@ -3727,10 +3800,10 @@ function populateReportTablesSheet(
   ws.getCell(`A${r}`).value = 'Итого суммарные тепловыделения от трубопроводов Σ(q_i^5 · l_i), Вт:';
   styleResultCell(ws.getCell(`A${r}`), '@', 'right');
   ws.mergeCells(`G${r}:H${r}`);
-  ws.getCell(`G${r}`).value = { formula: 'Подполье_ПТП!C21' };
+  ws.getCell(`G${r}`).value = { formula: 'Подполье_ПТП!C24' };
   styleResultCell(ws.getCell(`G${r}`), '0.0');
   ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: '"Qтр = 1,15·Σ = "&TEXT(1.15*Подполье_ПТП!C21,"0.0")&" Вт"' };
+  ws.getCell(`I${r}`).value = { formula: '"Qтр = 1,15·Σ = "&ROUND(1.15*Подполье_ПТП!C24,1)&" Вт"' };
   styleResultCell(ws.getCell(`I${r}`), '@', 'center');
   r += 2;
 
@@ -3741,7 +3814,7 @@ function populateReportTablesSheet(
     ws,
     r,
     11,
-    'Таблица 4.2 – Теплотехнические характеристики слоев перекрытия над техподпольем и проверка конденсации'
+    'Таблица 4.2 – Теплотехнические характеристики слоев перекрытия над техподпольем, R_п.ПТП и проверка конденсации'
   );
   r++;
   ws.getRow(r).height = 32;
@@ -3768,47 +3841,47 @@ function populateReportTablesSheet(
   });
   r++;
 
-  for (let srcRow = 7; srcRow <= 10; srcRow++) {
+  // Все 5 слоев ПТП (строки 7..11) + строка пароизоляции ПТП (строка 12)
+  for (let srcRow = 7; srcRow <= 12; srcRow++) {
+    const isVb = srcRow === 12;
     ws.getRow(r).height = 20;
-    ws.getCell(`A${r}`).value = srcRow - 6;
-    styleFormulaCell(ws.getCell(`A${r}`), '@', 'center');
+    ws.getCell(`A${r}`).value = isVb ? 'ПИ' : srcRow - 6;
+    styleFormulaCell(ws.getCell(`A${r}`), '@', 'center', isVb);
     ws.getCell(`B${r}`).value = { formula: `Подполье_ПТП!A${srcRow}` };
-    styleFormulaCell(ws.getCell(`B${r}`), '@', 'left');
+    styleFormulaCell(ws.getCell(`B${r}`), '@', 'left', isVb);
     ws.getCell(`C${r}`).value = { formula: `Подполье_ПТП!C${srcRow}` };
-    styleFormulaCell(ws.getCell(`C${r}`), '0.000', 'right');
+    styleFormulaCell(ws.getCell(`C${r}`), isVb ? '0.0000' : '0.000', 'right');
     ws.getCell(`D${r}`).value = { formula: `Подполье_ПТП!D${srcRow}` };
-    styleFormulaCell(ws.getCell(`D${r}`), '0.000', 'right');
+    styleFormulaCell(ws.getCell(`D${r}`), '0.0000', 'right');
     ws.getCell(`E${r}`).value = { formula: `Подполье_ПТП!F${srcRow}` };
     styleFormulaCell(ws.getCell(`E${r}`), '0.00', 'right');
-    ws.getCell(`F${r}`).value = {
-      formula: `INDEX('Справ_Материалы'!$I$2:$I$${ctx.matEndRow},MATCH(Подполье_ПТП!B${srcRow},'Справ_Материалы'!$A$2:$A$${ctx.matEndRow},0))`,
-    };
-    styleFormulaCell(ws.getCell(`F${r}`), '0.0000', 'right');
+    ws.getCell(`F${r}`).value = { formula: `Подполье_ПТП!H${srcRow}` };
+    styleFormulaCell(ws.getCell(`F${r}`), isVb ? '0.00000' : '0.0000', 'right');
     ws.getCell(`G${r}`).value = { formula: `Подполье_ПТП!E${srcRow}` };
     styleFormulaCell(ws.getCell(`G${r}`), '0.0000', 'right', true);
     ws.mergeCells(`H${r}:K${r}`);
-    ws.getCell(`H${r}`).value = { formula: `Подполье_ПТП!G${srcRow}` };
-    styleFormulaCell(ws.getCell(`H${r}`), '0.000', 'right');
+    ws.getCell(`H${r}`).value = { formula: `Подполье_ПТП!I${srcRow}` };
+    styleFormulaCell(ws.getCell(`H${r}`), '0.000', 'right', isVb);
     r++;
   }
 
-  // Итоговая строка ПТП с исправленными координатами
+  // Итоговая строка ПТП с отображением R_ПТП и R_п.ПТП (без TEXT)
   ws.getRow(r).height = 24;
   ws.mergeCells(`A${r}:B${r}`);
-  ws.getCell(`A${r}`).value = 'Итого по техподполью (R_ПТП, t_п, Δt_п, τ_в.цок, t_р.п):';
+  ws.getCell(`A${r}`).value = 'Итого по техподполью (R_ПТП, R_п.ПТП, t_п, Δt_п, τ_в.цок):';
   styleResultCell(ws.getCell(`A${r}`), '@', 'right');
   ws.mergeCells(`C${r}:D${r}`);
-  ws.getCell(`C${r}`).value = { formula: '"Rптп = "&TEXT(Подполье_ПТП!C14,"0.000")' };
+  ws.getCell(`C${r}`).value = { formula: '"Rптп = "&ROUND(Подполье_ПТП!C16,2)' };
   styleResultCell(ws.getCell(`C${r}`), '@', 'center');
-  ws.getCell(`E${r}`).value = { formula: '"tп = "&TEXT(Подполье_ПТП!C15,"0.00")&" °C"' };
+  ws.getCell(`E${r}`).value = { formula: '"Rп.ПТП = "&ROUND(Подполье_ПТП!C17,2)' };
   styleResultCell(ws.getCell(`E${r}`), '@', 'center');
-  ws.getCell(`F${r}`).value = { formula: '"Δtп = "&TEXT(Подполье_ПТП!C18,"0.00")&" °C"' };
+  ws.getCell(`F${r}`).value = { formula: '"tп = "&ROUND(Подполье_ПТП!C18,1)&" °C"' };
   styleResultCell(ws.getCell(`F${r}`), '@', 'center');
   ws.mergeCells(`G${r}:H${r}`);
-  ws.getCell(`G${r}`).value = { formula: '"τв.цок = "&TEXT(Подполье_ПТП!C20,"0.00")&" °C"' };
+  ws.getCell(`G${r}`).value = { formula: '"Δtп = "&ROUND(Подполье_ПТП!C21,2)&" °C"' };
   styleResultCell(ws.getCell(`G${r}`), '@', 'center');
   ws.mergeCells(`I${r}:K${r}`);
-  ws.getCell(`I${r}`).value = { formula: '"tр.п = "&TEXT(Подполье_ПТП!C17,"0.00")&" °C"' };
+  ws.getCell(`I${r}`).value = { formula: '"τв.цок = "&ROUND(Подполье_ПТП!C23,2)&" > tр.п = "&ROUND(Подполье_ПТП!C20,2)&" °C"' };
   styleResultCell(ws.getCell(`I${r}`), '@', 'center');
   r += 2;
 
@@ -4045,7 +4118,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(1.1)',
     'Высота здания H',
     'H = 1,0 + 3,0 · N + 2,7 (или H = 3,7 + 3,0 · N)',
-    `"H = 3,7 + 3,0 · "&Ввод_и_Итоги!C7&" = "&TEXT(Ввод_и_Итоги!F7,"0.0")`,
+    `"H = 3,7 + 3,0 · "&Ввод_и_Итоги!C7&" = "&ROUND(Ввод_и_Итоги!F7,1)`,
     'м',
     'Шибеко 2018, рис. 6.4'
   );
@@ -4054,7 +4127,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(1.2)',
     'Максимальная упругость водяного пара внутреннего воздуха E_в при t_в ≥ 0 °C',
     'E_в = 610,5 · exp((17,269 · t_в) / (237,3 + t_в)) (по табл. Прил. К Шибеко)',
-    `"При t_в = "&TEXT(Ввод_и_Итоги!C26,"0.0")&" °C: E_в = "&TEXT(Ввод_и_Итоги!C28,"0.00")`,
+    `"При t_в = "&ROUND(Ввод_и_Итоги!C26,1)&" °C: E_в = "&ROUND(Ввод_и_Итоги!C28,1)`,
     'Па',
     'Шибеко 2018, Прил. К, с. 95'
   );
@@ -4063,7 +4136,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(1.3)',
     'Действительная упругость (парциальное давление) водяного пара внутреннего воздуха e_в',
     'e_в = (φ_в / 100) · E_в',
-    `"e_в = ("&TEXT(Ввод_и_Итоги!C27,"0")&" / 100) · "&TEXT(Ввод_и_Итоги!C28,"0.00")&" = "&TEXT(Ввод_и_Итоги!C29,"0.00")`,
+    `"e_в = ("&ROUND(Ввод_и_Итоги!C27,0)&" / 100) · "&ROUND(Ввод_и_Итоги!C28,1)&" = "&ROUND(Ввод_и_Итоги!C29,2)`,
     'Па',
     'ТКП 45-2.04-43-2006, п. 9.1'
   );
@@ -4072,7 +4145,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(1.4)',
     'Температура точки росы внутреннего воздуха t_р',
     't_р определяется интерполяцией по таблице E(t) Прил. К при E(t_р) = e_в',
-    `"При e_в = "&TEXT(Ввод_и_Итоги!C29,"0.00")&" Па: t_р = "&TEXT(Ввод_и_Итоги!C30,"0.00")`,
+    `"При e_в = "&ROUND(Ввод_и_Итоги!C29,2)&" Па: t_р = "&ROUND(Ввод_и_Итоги!C30,2)`,
     '°C',
     'Шибеко 2018, Прил. К'
   );
@@ -4081,7 +4154,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(1.5)',
     'Максимальная и действительная упругость пара наружного воздуха за отопительный период E_н.от, e_н.от',
     'E_н.от = E(t_н.от);   e_н.от = (φ_н.от / 100) · E_н.от',
-    `"При t_н.от = "&TEXT(Ввод_и_Итоги!F13,"0.0")&" °C и φ_н.от = "&TEXT(Ввод_и_Итоги!F15,"0")&"%: E_н.от = "&TEXT(Ввод_и_Итоги!F16,"0.00")&" Па; e_н.от = ("&TEXT(Ввод_и_Итоги!F15,"0")&"/100)·"&TEXT(Ввод_и_Итоги!F16,"0.00")&" = "&TEXT(Ввод_и_Итоги!F17,"0.00")`,
+    `"При t_н.от = "&ROUND(Ввод_и_Итоги!F13,1)&" °C и φ_н.от = "&ROUND(Ввод_и_Итоги!F15,0)&"%: E_н.от = "&ROUND(Ввод_и_Итоги!F16,1)&" Па; e_н.от = ("&ROUND(Ввод_и_Итоги!F15,0)&"/100)·"&ROUND(Ввод_и_Итоги!F16,1)&" = "&ROUND(Ввод_и_Итоги!F17,2)`,
     'Па',
     'СН 2.04.02-2019 / Прил. К'
   );
@@ -4095,16 +4168,16 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.1)',
     'Термическое сопротивление отдельного слоя стены R_i',
     'R_i = δ_i / λ_i',
-    `"R_1 = "&TEXT(Стена_Расчет!D7,"0.000")&"/"&TEXT(Стена_Расчет!E7,"0.000")&" = "&TEXT(Стена_Расчет!F7,"0.000")&"; R_2 = "&TEXT(Стена_Расчет!D8,"0.000")&"/"&TEXT(Стена_Расчет!E8,"0.000")&" = "&TEXT(Стена_Расчет!F8,"0.000")&"; R_4 = "&TEXT(Стена_Расчет!D10,"0.000")&"/"&TEXT(Стена_Расчет!E10,"0.000")&" = "&TEXT(Стена_Расчет!F10,"0.000")`,
+    `"R_1 = "&ROUND(Стена_Расчет!D7,3)&"/"&ROUND(Стена_Расчет!E7,3)&" = "&ROUND(Стена_Расчет!F7,3)&"; R_2 = "&ROUND(Стена_Расчет!D8,3)&"/"&ROUND(Стена_Расчет!E8,3)&" = "&ROUND(Стена_Расчет!F8,3)&"; R_4 = "&ROUND(Стена_Расчет!D10,3)&"/"&ROUND(Стена_Расчет!E10,3)&" = "&ROUND(Стена_Расчет!F10,3)`,
     'м²·°C/Вт',
     'ТКП 45-2.04-43-2006, ф-ла (5.1)'
   );
 
   addFormulaRow(
     '(2.2)',
-    'Сопротивление теплопередаче слоев стены без утеплителя R_пр',
-    'R_пр = 1/α_в + Σ R_i(без утепл.) + 1/α_н',
-    `"R_пр = 1/"&TEXT(Ввод_и_Итоги!C34,"0.0")&" + "&TEXT(Стена_Расчет!F7,"0.000")&" + "&TEXT(Стена_Расчет!F8,"0.000")&" + "&TEXT(Стена_Расчет!F10,"0.000")&" + 1/"&TEXT(Ввод_и_Итоги!C35,"0")&" = "&TEXT(Стена_Расчет!C13,"0.000")`,
+    'Сопротивление теплопередаче слоев стены без утеплителя R_без_ут и требуемое R_пр',
+    'R_пр = R_т.норм · n;   R_без_ут = 1/α_в + Σ R_i(без утепл.) + 1/α_н',
+    `"R_пр = "&ROUND(Ввод_и_Итоги!F26,2)&" · "&ROUND(Стена_Расчет!J5,2)&" = "&ROUND(Стена_Расчет!C13,2)&" м²·°C/Вт; ΣR_слоев = "&ROUND(SUM(Стена_Расчет!F7:F12),3)`,
     'м²·°C/Вт',
     'Шибеко 2018, ф-ла (2.3)'
   );
@@ -4112,8 +4185,8 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
   addFormulaRow(
     '(2.3)',
     'Расчетная и принятая толщина теплоизоляционного слоя стены δ_ут.ст',
-    'δ_ут.расч = (R_т.норм.ст − R_пр) · λ_ут;   δ_ут.прин кратно 10 мм в большую сторону',
-    `"δ_ут.расч = ("&TEXT(Ввод_и_Итоги!F26,"0.00")&" − "&TEXT(Стена_Расчет!C13,"0.000")&") · "&TEXT(Ввод_и_Итоги!$F$33,"0.000")&" = "&TEXT(Стена_Расчет!C14,"0.000")&" м → принято δ_ут = "&TEXT(Стена_Расчет!C15,"0.000")&" м ("&TEXT(Стена_Расчет!C15*1000,"0")&" мм)"`,
+    'δ_ут.расч = (R_пр − R_без_ут) · λ_ут;   δ_ут.прин кратно 10 мм в большую сторону',
+    `"δ_ут.расч = "&ROUND(Стена_Расчет!C14,3)&" м → принято δ_ут = "&ROUND(Стена_Расчет!C15,3)&" м ("&ROUND(Стена_Расчет!C15*1000,0)&" мм)"`,
     'м',
     'Шибеко 2018, ф-ла (2.4)'
   );
@@ -4122,7 +4195,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.4)',
     'Общее (условное) сопротивление теплопередаче наружной стены R_0',
     'R_0 = 1/α_в + Σ(δ_i / λ_i) + 1/α_н',
-    `"R_0 = "&TEXT(Стена_Расчет!C13,"0.000")&" + "&TEXT(Стена_Расчет!F9,"0.000")&" = "&TEXT(Стена_Расчет!C16,"0.000")&" ≥ R_т.норм = "&TEXT(Ввод_и_Итоги!F26,"0.00")`,
+    `"R_0 = 1/"&ROUND(Ввод_и_Итоги!C34,1)&" + "&ROUND(SUM(Стена_Расчет!F7:F12),3)&" + 1/"&ROUND(Ввод_и_Итоги!C35,0)&" = "&ROUND(Стена_Расчет!C16,2)&" ≥ R_пр = "&ROUND(Стена_Расчет!C13,2)`,
     'м²·°C/Вт',
     'ТКП 45-2.04-43-2006, ф-ла (5.2)'
   );
@@ -4131,7 +4204,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.5)',
     'Тепловая инерция слоев и всей наружной стены D',
     'D_i = R_i · s_i;   D = Σ D_i',
-    `"D = "&TEXT(Стена_Расчет!H7,"0.00")&" + "&TEXT(Стена_Расчет!H8,"0.00")&" + "&TEXT(Стена_Расчет!H9,"0.00")&" + "&TEXT(Стена_Расчет!H10,"0.00")&" = "&TEXT(Стена_Расчет!C17,"0.00")`,
+    `"D = "&ROUND(Стена_Расчет!H7,2)&" + "&ROUND(Стена_Расчет!H8,2)&" + "&ROUND(Стена_Расчет!H9,2)&" + "&ROUND(Стена_Расчет!H10,2)&" + "&ROUND(Стена_Расчет!H11,2)&" = "&ROUND(Стена_Расчет!C17,2)`,
     '—',
     'ТКП 45-2.04-43-2006, ф-ла (5.3)'
   );
@@ -4139,8 +4212,8 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
   addFormulaRow(
     '(2.6)',
     'Расчетная зимняя температура наружного воздуха t_н в зависимости от тепловой инерции D',
-    'При D ≤ 4: t_н = t_х.с; при 4 < D ≤ 7: t_н = (t_х.с + t_х.п)/2 или t_х.тр.с; при D > 7: t_н = t_х.п',
-    `"При D = "&TEXT(Стена_Расчет!C17,"0.00")&": t_н = "&TEXT(Стена_Расчет!C18,"0.0")`,
+    'При D ≤ 4: t_н = t_х.с; при 4 < D ≤ 7: t_н = (t_х.с + t_х.п)/2; при D > 7: t_н = t_х.п',
+    `"При D = "&ROUND(Стена_Расчет!C17,2)&": t_н = "&ROUND(Стена_Расчет!C18,1)`,
     '°C',
     'ТКП 45-2.04-43-2006, табл. 5.2'
   );
@@ -4149,7 +4222,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.7)',
     'Расчетный температурный перепад Δt_в между внутренним воздухом и внутренней поверхностью стены',
     'Δt_в = (t_в − t_н) / (R_0 · α_в) ≤ Δt_в.норм',
-    `"Δt_в = ("&TEXT(Ввод_и_Итоги!C26,"0.0")&" − ("&TEXT(Стена_Расчет!C18,"0.0")&")) / ("&TEXT(Стена_Расчет!C16,"0.000")&" · "&TEXT(Ввод_и_Итоги!C34,"0.0")&") = "&TEXT(Стена_Расчет!C19,"0.00")&" °C ≤ Δt_в.норм = "&TEXT(Ввод_и_Итоги!F29,"0.0")`,
+    `"Δt_в = ("&ROUND(Ввод_и_Итоги!C26,1)&" − ("&ROUND(Стена_Расчет!C18,1)&")) / ("&ROUND(Стена_Расчет!C16,2)&" · "&ROUND(Ввод_и_Итоги!C34,1)&") = "&ROUND(Стена_Расчет!C19,2)&" °C ≤ Δt_в.норм = "&ROUND(Ввод_и_Итоги!F29,1)`,
     '°C',
     'ТКП 45-2.04-43-2006, ф-ла (6.2)'
   );
@@ -4158,7 +4231,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.8)',
     'Температура внутренней поверхности наружной стены τ_в',
     'τ_в = t_в − (t_в − t_н) / (R_0 · α_в) > t_р',
-    `"τ_в = "&TEXT(Ввод_и_Итоги!C26,"0.0")&" − "&TEXT(Стена_Расчет!C19,"0.00")&" = "&TEXT(Стена_Расчет!C20,"0.00")&" °C > t_р = "&TEXT(Ввод_и_Итоги!C30,"0.00")`,
+    `"τ_в = "&ROUND(Ввод_и_Итоги!C26,1)&" − "&ROUND(Стена_Расчет!C19,2)&" = "&ROUND(Стена_Расчет!C20,2)&" °C > t_р = "&ROUND(Ввод_и_Итоги!C30,2)`,
     '°C',
     'Шибеко 2018, ф-ла (2.8)'
   );
@@ -4166,8 +4239,8 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
   addFormulaRow(
     '(2.9)',
     'Сопротивление паропроницанию слоя R_пi и общее сопротивление паропроницанию стены R_п',
-    'R_пi = δ_i / μ_i;   R_п = R_п.в + Σ R_пi + R_п.пи + R_п.н (где R_п.в = 1/37 = 0,027; R_п.н = 1/74 = 0,014)',
-    `"R_п = 0,027 + "&TEXT(SUM(Стена_Расчет!J7:J11),"0.000")&" + "&TEXT(Стена_Расчет!J12,"0.000")&" + 0,014 = "&TEXT(Стена_Расчет!C21,"0.000")`,
+    'R_пi = δ_i / μ_i;   R_п = R_п.в + Σ R_пi + R_п.пи + R_п.н (где R_п.в = 1/37 = 0,027; R_п.н = 1/77 = 0,013)',
+    `"R_п = 0,027 + "&ROUND(SUM(Стена_Расчет!J7:J11),3)&" + "&ROUND(Стена_Расчет!J12,3)&" + 0,013 = "&ROUND(Стена_Расчет!C21,2)`,
     'м²·ч·Па/мг',
     'Шибеко 2018, п. 7.1, ф-ла (7.1)'
   );
@@ -4176,7 +4249,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.10)',
     'Температура t_x в произвольной плоскости x стены (метод К.Ф. Фокина за отопительный период)',
     't_x = t_в − ((t_в − t_н.от) / R_0) · (1/α_в + Σ_{i=1}^x R_i)',
-    `"Напр., на вн. пов-ти (1/α_в = 0,115): t_1 = "&TEXT(Ввод_и_Итоги!C26,"0.0")&" − (("&TEXT(Ввод_и_Итоги!C26,"0.0")&" − ("&TEXT(Ввод_и_Итоги!F13,"0.0")&")) / "&TEXT(Стена_Расчет!C16,"0.000")&") · 0,115 = "&TEXT(Стена_Расчет!E28,"0.00")`,
+    `"На вн. пов-ти (1/α_в = 0,115): t_1 = "&ROUND(Ввод_и_Итоги!C26,1)&" − (("&ROUND(Ввод_и_Итоги!C26,1)&" − ("&ROUND(Ввод_и_Итоги!F13,1)&")) / "&ROUND(Стена_Расчет!C16,2)&") · 0,115 = "&ROUND(Стена_Расчет!G28,2)`,
     '°C',
     'Шибеко 2018, ф-ла (7.2)'
   );
@@ -4185,19 +4258,19 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(2.11)',
     'Действительная упругость водяного пара e_x в плоскости x стены',
     'e_x = e_в − ((e_в − e_н.от) / R_п) · (R_п.в + Σ_{i=1}^x R_пi)',
-    `"Напр., на вн. пов-ти: e_1 = "&TEXT(Ввод_и_Итоги!C29,"0.00")&" − (("&TEXT(Ввод_и_Итоги!C29,"0.00")&" − "&TEXT(Ввод_и_Итоги!F17,"0.00")&") / "&TEXT(Стена_Расчет!C21,"0.000")&") · 0,027 = "&TEXT(Стена_Расчет!J28,"0.00")`,
+    `"На вн. пов-ти: e_1 = "&ROUND(Ввод_и_Итоги!C29,2)&" − (("&ROUND(Ввод_и_Итоги!C29,2)&" − "&ROUND(Ввод_и_Итоги!F17,2)&") / "&ROUND(Стена_Расчет!C21,2)&") · 0,027 = "&ROUND(Стена_Расчет!I28,2)`,
     'Па',
     'Шибеко 2018, ф-ла (7.3)'
   );
 
-  // Пошаговые вычисления t_x, e_x, E_x по всем активным плоскостям стены (ранги 1..15)
+  // Пошаговые вычисления t_x (G), E_x (H), e_x (I), Δ (J) по всем активным плоскостям стены (ранги 1..15)
   for (let rank = 1; rank <= 15; rank++) {
     const matchExpr = `MATCH(${rank},Стена_Расчет!$L$28:$L$44,0)`;
     addFormulaRow(
       `(2.11.${rank})`,
-      `Стена — строка ${rank} таблицы тепловлажностного режима`,
-      'Если плоскость: t_x, e_x, E_x(t_x) и проверка e_x ≤ E_x; если слой: t_ср.i = (t_лев+t_прав)/2, E_i(t_ср.i)',
-      `IFERROR(INDEX(Стена_Расчет!$B$28:$B$44,${matchExpr})&": "&IF(ISNUMBER(INDEX(Стена_Расчет!$E$28:$E$44,${matchExpr})),"t_x = "&TEXT(INDEX(Стена_Расчет!$E$28:$E$44,${matchExpr}),"0.00")&" °C; e_x = "&TEXT(INDEX(Стена_Расчет!$J$28:$J$44,${matchExpr}),"0.00")&" Па; E_x = "&TEXT(INDEX(Стена_Расчет!$K$28:$K$44,${matchExpr}),"0.00")&" Па ("&IF(INDEX(Стена_Расчет!$J$28:$J$44,${matchExpr})<=INDEX(Стена_Расчет!$K$28:$K$44,${matchExpr}),"e_x ≤ E_x — без конд.","e_x > E_x — ЗОНА КОНДЕНСАЦИИ")&")","R_i = "&TEXT(INDEX(Стена_Расчет!$C$28:$C$44,${matchExpr}),"0.000")&"; t_ср = "&TEXT(INDEX(Стена_Расчет!$F$28:$F$44,${matchExpr}),"0.00")&" °C; R_пi = "&TEXT(INDEX(Стена_Расчет!$H$28:$H$44,${matchExpr}),"0.000")),"—")`,
+      `Стена — плоскость ${rank} таблицы тепловлажностного режима`,
+      't_x = t_в − ((t_в − t_н.от)/R_0)·ΣR_i;   e_x = e_в − ((e_в − e_н.от)/R_п)·ΣR_пi;   проверка e_x ≤ E(t_x)',
+      `IFERROR(INDEX(Стена_Расчет!$B$28:$B$44,${matchExpr})&": t_от = "&ROUND(INDEX(Стена_Расчет!$G$28:$G$44,${matchExpr}),2)&" °C; ΣR_п = "&ROUND(INDEX(Стена_Расчет!$E$28:$E$44,${matchExpr}),3)&"; e_x = "&ROUND(INDEX(Стена_Расчет!$I$28:$I$44,${matchExpr}),2)&" Па; E_x = "&ROUND(INDEX(Стена_Расчет!$H$28:$H$44,${matchExpr}),1)&" Па ("&IF(INDEX(Стена_Расчет!$J$28:$J$44,${matchExpr})>=0,"e_x ≤ E_x — без конд.","e_x > E_x — ЗОНА КОНДЕНСАЦИИ")&")","—")`,
       '°C / Па',
       'Табл. 2.2 (Шибеко разд. 7)'
     );
@@ -4210,9 +4283,9 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
 
   addFormulaRow(
     '(3.1)',
-    'Сопротивление теплопередаче покрытия без утеплителя по ребрам ж/б плиты R_пр.пк',
-    'R_пр.пк = R_т.норм.пк · n;   R_без_ут = 1/α_в + R_шт + R_жб + R_пар + R_кров + 1/α_н',
-    `"R_пр.пк = "&TEXT(Ввод_и_Итоги!F27,"0.00")&" · "&TEXT(Покрытие_Расчет!J5,"0.00")&" = "&TEXT(Покрытие_Расчет!C19,"0.000")&" м²·°C/Вт (без утеплителя R_без_ут = "&TEXT(Покрытие_Расчет!C18,"0.000")&" м²·°C/Вт)"`,
+    'Требуемое сопротивление R_пр.пк и сопротивление покрытия без утеплителя R_без_ут',
+    'R_пр.пк = R_т.норм.пк · n;   R_без_ут = 1/α_в + R_внутр + R_пл + R_нар + R_пи + 1/α_н',
+    `"R_пр.пк = "&ROUND(Ввод_и_Итоги!F27,2)&" · "&ROUND(Покрытие_Расчет!J5,2)&" = "&ROUND(Покрытие_Расчет!C16,2)&" м²·°C/Вт (R_без_ут = "&ROUND(Покрытие_Расчет!C15,3)&" м²·°C/Вт)"`,
     'м²·°C/Вт',
     'Шибеко 2018, разд. 3'
   );
@@ -4221,16 +4294,16 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(3.2)',
     'Расчетная и принятая толщина утеплителя покрытия δ_ут.пк',
     'δ_ут.расч = (R_пр.пк − R_без_ут) · λ_ут;   δ_ут.прин кратно 10 мм в большую сторону',
-    `"δ_ут.расч = ("&TEXT(Покрытие_Расчет!C19,"0.00")&" − "&TEXT(Покрытие_Расчет!C18,"0.000")&") · "&TEXT(Ввод_и_Итоги!$F$33,"0.000")&" = "&TEXT(Покрытие_Расчет!C20,"0.000")&" м → принято δ_ут = "&TEXT(Покрытие_Расчет!C21,"0.000")&" м ("&TEXT(Покрытие_Расчет!C21*1000,"0")&" мм)"`,
+    `"δ_ут.расч = ("&ROUND(Покрытие_Расчет!C16,2)&" − "&ROUND(Покрытие_Расчет!C15,3)&") · "&ROUND(Ввод_и_Итоги!$F$33,4)&" = "&ROUND(Покрытие_Расчет!C17,3)&" м → принято δ_ут = "&ROUND(Покрытие_Расчет!C18,2)&" м ("&ROUND(Покрытие_Расчет!C18*1000,0)&" мм)"`,
     'м',
     'Шибеко 2018, разд. 3'
   );
 
   addFormulaRow(
     '(3.3)',
-    'Общее сопротивление теплопередаче покрытия по ребрам R_0 и по пустоте R_0^пуст',
-    'R_0 = R_пр.пк + δ_ут.прин/λ_ут;   R_0^пуст = R_0 − R_жб + R_жб.н + R_в.п + R_жб.в',
-    `"R_0 (по ребрам) = "&TEXT(Покрытие_Расчет!C22,"0.000")&" м²·°C/Вт; R_0^пуст (по пустоте) = "&TEXT(Покрытие_Расчет!C23,"0.000")&" м²·°C/Вт"`,
+    'Общее сопротивление теплопередаче покрытия (приведенное R_0, по пустоте R_0^пуст и по ребру)',
+    'R_0 = 1/α_в + ΣR_i + 1/α_н;   R_0^пуст = R_без_пл + 2·δ_ф/λ_б + 0,15 + R_ут',
+    `"R_0 (прив.) = "&ROUND(Покрытие_Расчет!C19,2)&"; R_0^пуст = "&ROUND(Покрытие_Расчет!C20,2)&"; R_0^реб = "&ROUND(Покрытие_Расчет!K23,2)&" м²·°C/Вт"`,
     'м²·°C/Вт',
     'Шибеко 2018, разд. 3, 7'
   );
@@ -4239,7 +4312,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(3.4)',
     'Тепловая инерция покрытия по пустоте D_пуст и выбор расчетной зимней температуры t_н',
     'D_пуст = Σ(R_i · s_i) (для воздушной прослойки s_в.п = 0)',
-    `"D_пуст = "&TEXT(Покрытие_Расчет!C24,"0.00")&" → расчетная температура зимы t_н = "&TEXT(Покрытие_Расчет!C25,"0.0")&" °C"`,
+    `"D_пуст = "&ROUND(Покрытие_Расчет!C21,2)&" → расчетная температура зимы t_н = "&ROUND(Покрытие_Расчет!C22,1)&" °C"`,
     '— / °C',
     'ТКП 45-2.04-43-2006, табл. 5.2'
   );
@@ -4247,19 +4320,28 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
   addFormulaRow(
     '(3.5)',
     'Температура внутренней поверхности покрытия τ_в.пуст и τ_в.ребро',
-    'τ_в.пуст = t_в − (t_в − t_н) / (R_0^пуст · α_в);   τ_в.ребро = t_в − (t_в − t_н) / (R_0 · α_в)',
-    `"τ_в.пуст = "&TEXT(Покрытие_Расчет!C26,"0.00")&" °C; τ_в.ребро = "&TEXT(Покрытие_Расчет!H26,"0.00")&" °C > t_р = "&TEXT(Ввод_и_Итоги!C30,"0.00")&" °C"`,
+    'τ_в.пуст = t_в − (t_в − t_н) / (R_0^пуст · α_в);   τ_в.ребро = t_в − (t_в − t_н) / (R_0^реб · α_в)',
+    `"τ_в.пуст = "&ROUND(Покрытие_Расчет!C23,2)&" °C; τ_в.ребро = "&ROUND(Покрытие_Расчет!H23,2)&" °C > t_р = "&ROUND(Ввод_и_Итоги!C30,2)&" °C"`,
     '°C',
     'ТКП 45-2.04-43-2006, п. 6.2'
+  );
+
+  addFormulaRow(
+    '(3.5а)',
+    'Общее сопротивление паропроницанию покрытия R_п (по пустоте и по ребру, R_п.возд = 0)',
+    'R_п.пуст = 1/37 + ΣR_п.вн + 2·δ_ф/0,03 + 0 + R_п.ут + R_п.нар + R_п.пи + 1/77;   R_п.реб (вместо 2·δ_ф — h/0,03)',
+    `"R_п (по пустоте, R_п.возд=0) = "&ROUND(Покрытие_Расчет!C24,2)&" м²·ч·Па/мг; R_п (по ребру) = "&ROUND(Покрытие_Расчет!C25,2)&" м²·ч·Па/мг (R_п.пи = "&ROUND(Покрытие_Расчет!J13,3)&")"`,
+    'м²·ч·Па/мг',
+    'СП 2.04.01-2020, п. 10.5; Шибеко п. 7.1.3'
   );
 
   for (let rank = 1; rank <= 13; rank++) {
     const matchExpr = `MATCH(${rank},Покрытие_Расчет!$L$34:$L$46,0)`;
     addFormulaRow(
       `(3.6.${rank})`,
-      `Покрытие (по пустоте) — строка ${rank} таблицы тепловлажностного режима`,
-      't_x = t_в − ((t_в − t_н.от)/R_0^пуст)·ΣR_i;   e_x = e_в − ((e_в − e_н.от)/R_п)·ΣR_пi',
-      `IFERROR(INDEX(Покрытие_Расчет!$B$34:$B$46,${matchExpr})&": "&IF(ISNUMBER(INDEX(Покрытие_Расчет!$E$34:$E$46,${matchExpr})),"t_x = "&TEXT(INDEX(Покрытие_Расчет!$E$34:$E$46,${matchExpr}),"0.00")&" °C; e_x = "&TEXT(INDEX(Покрытие_Расчет!$J$34:$J$46,${matchExpr}),"0.00")&" Па; E_x = "&TEXT(INDEX(Покрытие_Расчет!$K$34:$K$46,${matchExpr}),"0.00")&" Па ("&IF(INDEX(Покрытие_Расчет!$J$34:$J$46,${matchExpr})<=INDEX(Покрытие_Расчет!$K$34:$K$46,${matchExpr}),"e_x ≤ E_x — без конд.","e_x > E_x — ЗОНА КОНДЕНСАЦИИ")&")","R_i = "&TEXT(INDEX(Покрытие_Расчет!$C$34:$C$46,${matchExpr}),"0.000")&"; t_ср = "&TEXT(INDEX(Покрытие_Расчет!$F$34:$F$46,${matchExpr}),"0.00")&" °C; R_пi = "&TEXT(INDEX(Покрытие_Расчет!$H$34:$H$46,${matchExpr}),"0.000")),"—")`,
+      `Покрытие (по пустоте) — плоскость ${rank} таблицы тепловлажностного режима`,
+      't_x = t_в − ((t_в − t_н.от)/R_0^пуст)·ΣR_i;   e_x = e_в − ((e_в − e_н.от)/R_п.пуст)·ΣR_пi',
+      `IFERROR(INDEX(Покрытие_Расчет!$B$34:$B$46,${matchExpr})&": t_от = "&ROUND(INDEX(Покрытие_Расчет!$G$34:$G$46,${matchExpr}),2)&" °C; ΣR_п = "&ROUND(INDEX(Покрытие_Расчет!$E$34:$E$46,${matchExpr}),3)&"; e_x = "&ROUND(INDEX(Покрытие_Расчет!$I$34:$I$46,${matchExpr}),2)&" Па; E_x = "&ROUND(INDEX(Покрытие_Расчет!$H$34:$H$46,${matchExpr}),1)&" Па ("&IF(INDEX(Покрытие_Расчет!$J$34:$J$46,${matchExpr})>=0,"e_x ≤ E_x — без конд.","e_x > E_x — ЗОНА КОНДЕНСАЦИИ")&")","—")`,
       '°C / Па',
       'Табл. 3.2 (Шибеко разд. 7)'
     );
@@ -4274,16 +4356,25 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(4.1)',
     'Сопротивление теплопередаче перекрытия над техподпольем R_ПТП',
     'R_ПТП = 1/α_в.п + Σ(δ_i / λ_i) + 1/α_н.п (где α_в.п = 8,7; α_н.п = 17,0 Вт/(м²·°C))',
-    `"R_ПТП = 1/8,7 + "&TEXT(SUM(Подполье_ПТП!E7:E10),"0.000")&" + 1/17 = "&TEXT(Подполье_ПТП!C14,"0.000")`,
+    `"R_ПТП = 1/8,7 + "&ROUND(SUM(Подполье_ПТП!E7:E12),3)&" + 1/17 = "&ROUND(Подполье_ПТП!C16,2)&" ≥ R_норм = "&ROUND(Подполье_ПТП!C13,2)`,
     'м²·°C/Вт',
     'Шибеко 2018, разд. 4, ф-ла (4.2)'
+  );
+
+  addFormulaRow(
+    '(4.1а)',
+    'Сопротивление паропроницанию перекрытия над техподпольем R_п.ПТП',
+    'R_п.ПТП = 1/37 + Σ(δ_i / μ_i) + R_п.пи + 1/77',
+    `"R_п.ПТП = 0,027 + "&ROUND(SUM(Подполье_ПТП!I7:I11),3)&" + "&ROUND(Подполье_ПТП!I12,3)&" + 0,013 = "&ROUND(Подполье_ПТП!C17,2)`,
+    'м²·ч·Па/мг',
+    'СП 2.04.01-2020, п. 10.5'
   );
 
   addFormulaRow(
     '(4.2)',
     'Суммарные тепловыделения от трубопроводов в техподполье Q_тр',
     'Q_тр = 1,15 · Σ(q_i^5 · l_i), где q_i^5 — по табл. Прил. О Шибеко при t_окр = 5 °C',
-    `"Σ(q_i^5 · l_i) = "&TEXT(Подполье_ПТП!C21,"0.0")&" Вт; Q_тр = 1,15 · "&TEXT(Подполье_ПТП!C21,"0.0")&" = "&TEXT(1.15*Подполье_ПТП!C21,"0.0")`,
+    `"Σ(q_i^5 · l_i) = "&ROUND(Подполье_ПТП!C24,1)&" Вт; Q_тр = 1,15 · "&ROUND(Подполье_ПТП!C24,1)&" = "&ROUND(1.15*Подполье_ПТП!C24,1)`,
     'Вт',
     'Шибеко 2018, ф-ла (4.6), Прил. О'
   );
@@ -4292,7 +4383,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(4.3)',
     'Расчетная температура воздуха в техническом подполье t_п из уравнения теплового баланса',
     't_п = (t_в·(F_п/R_ПТП) + t_н·(F_ц/R_ц + F_п/R_п.гр + 0,28·L·n_в·V_п·c·ρ_в.п) + 1,15·Σ(q_i^5·l_i)) / (F_п/R_ПТП + F_ц/R_ц + F_п/R_п.гр + 0,28·L·n_в·V_п·c·ρ_в.п)',
-    `"Из уравнения теплового баланса: t_п = "&TEXT(Подполье_ПТП!C15,"0.00")&" °C (норма: ≥ +2 °C)"`,
+    `"Из уравнения теплового баланса: t_п = "&ROUND(Подполье_ПТП!C18,2)&" °C (норма: ≥ +2 °C)"`,
     '°C',
     'Шибеко 2018, ф-ла (4.1)–(4.8)'
   );
@@ -4301,7 +4392,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(4.4)',
     'Проверка температурного перепада на полу первого этажа Δt_п',
     'Δt_п = (t_в − t_п) / (R_ПТП · α_в.п) ≤ 2,0 °C',
-    `"Δt_п = ("&TEXT(Ввод_и_Итоги!C26,"0.0")&" − "&TEXT(Подполье_ПТП!C15,"0.00")&") / ("&TEXT(Подполье_ПТП!C14,"0.000")&" · 8,7) = "&TEXT(Подполье_ПТП!C18,"0.00")&" °C ≤ 2,0 °C"`,
+    `"Δt_п = ("&ROUND(Ввод_и_Итоги!C26,1)&" − "&ROUND(Подполье_ПТП!C18,2)&") / ("&ROUND(Подполье_ПТП!C16,2)&" · 8,7) = "&ROUND(Подполье_ПТП!C21,2)&" °C ≤ 2,0 °C"`,
     '°C',
     'Шибеко 2018, ф-ла (4.9)'
   );
@@ -4309,8 +4400,8 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
   addFormulaRow(
     '(4.5)',
     'Температура внутренней поверхности цокольной стены техподполья τ_в.цок и проверка невыпадения конденсата',
-    'τ_в.цок = t_п − (t_п − t_н) / (R_0.цок · α_в.цок) > t_р.п (при t_п и φ_п = 75%)',
-    `"τ_в.цок = "&TEXT(Подполье_ПТП!C15,"0.00")&" − ("&TEXT(Подполье_ПТП!C15,"0.00")&" − ("&TEXT(Ввод_и_Итоги!F13,"0.0")&")) / (1,25 · 17) = "&TEXT(Подполье_ПТП!C20,"0.00")&" °C > t_р.п = "&TEXT(Подполье_ПТП!C17,"0.00")&" °C"`,
+    'τ_в.цок = t_п − (t_п − t_н) / (R_0.цок · α_в.цок) > t_р.п (при t_п и φ_п)',
+    `"τ_в.цок = "&ROUND(Подполье_ПТП!C18,2)&" − ("&ROUND(Подполье_ПТП!C18,2)&" − ("&ROUND(Ввод_и_Итоги!F13,1)&")) / (1,25 · 17) = "&ROUND(Подполье_ПТП!C23,2)&" °C > t_р.п = "&ROUND(Подполье_ПТП!C20,2)&" °C"`,
     '°C',
     'Шибеко 2018, ф-ла (4.10)'
   );
@@ -4324,7 +4415,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(5.1)',
     'Приведенное сопротивление теплопередаче окна R_т.ок',
     'R_т.ок = Σ F_i / Σ(F_i / R_тi) = (Σ F_непр + Σ F_св) / (Σ(F_непр/R_т.непр) + Σ(F_св/R_т.св)) ≥ R_т.норм.ок',
-    `"R_т.ок = "&TEXT(Окна_Расчет!E44,"0.00000")&" / ("&TEXT(Окна_Расчет!G45,"0.000")&" + "&TEXT(Окна_Расчет!G46,"0.000")&") = "&TEXT(Окна_Расчет!E44,"0.00000")&" / "&TEXT(Окна_Расчет!G44,"0.000")&" = "&TEXT(Окна_Расчет!F44,"0.00")&" м²·°C/Вт ≥ R_т.норм = 1,00"`,
+    `"R_т.ок = "&ROUND(Окна_Расчет!E44,5)&" / ("&ROUND(Окна_Расчет!G45,4)&" + "&ROUND(Окна_Расчет!G46,4)&") = "&ROUND(Окна_Расчет!E44,5)&" / "&ROUND(Окна_Расчет!G44,4)&" = "&ROUND(Окна_Расчет!F44,2)&" м²·°C/Вт ≥ R_т.норм = "&ROUND(Окна_Расчет!C15,2)`,
     'м²·°C/Вт',
     'Шибеко 2018, ф-ла (6.1), табл. 6.2'
   );
@@ -4333,7 +4424,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(5.2)',
     'Плотность наружного и внутреннего воздуха ρ_н, ρ_в',
     'ρ_н = 353 / (273 + t_н);   ρ_в = 353 / (273 + t_в)',
-    `"ρ_н = 353 / (273 + ("&TEXT(Окна_Расчет!C8,"0.0")&")) = "&TEXT(Окна_Расчет!E49,"0.00")&" кг/м³; ρ_в = 353 / (273 + "&TEXT(Ввод_и_Итоги!C26,"0.0")&") = "&TEXT(Окна_Расчет!E49-Окна_Расчет!D49,"0.00")&" кг/м³; ρ_н − ρ_в = "&TEXT(Окна_Расчет!D49,"0.00")&" кг/м³"`,
+    `"ρ_н = 353 / (273 + ("&ROUND(Ввод_и_Итоги!F11,1)&")) = "&ROUND(Окна_Расчет!F12,2)&" кг/м³; ρ_в = 353 / (273 + "&ROUND(Ввод_и_Итоги!C26,1)&") = "&ROUND(Окна_Расчет!F13,2)&" кг/м³; ρ_н − ρ_в = "&ROUND(Окна_Расчет!F14,2)&" кг/м³"`,
     'кг/м³',
     'Шибеко 2018, с. 48'
   );
@@ -4342,7 +4433,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(5.3 / 6.2)',
     'Разность давлений воздуха на наружной и внутренней поверхностях окна i-го этажа Δp_i',
     'Δp_i = (H − h_i) · g · (ρ_н − ρ_в) + 0,5 · ρ_н · v_ср² · (c_н − c_п) · k_i',
-    `"Для 1-го этажа (h_1 = "&TEXT(Окна_Расчет!C49,"0.00")&" м, k_1 = "&TEXT(Окна_Расчет!H49,"0.000")&"): Δp_1 = ("&TEXT(Ввод_и_Итоги!F7,"0.0")&" − "&TEXT(Окна_Расчет!C49,"0.00")&")·9,81·"&TEXT(Окна_Расчет!D49,"0.00")&" + 0,5·"&TEXT(Окна_Расчет!E49,"0.00")&"·"&TEXT(Ввод_и_Итоги!F12,"0.0")&"²·1,4·"&TEXT(Окна_Расчет!H49,"0.000")&" = "&TEXT(Окна_Расчет!I49,"0.00")&" Па"`,
+    `"Для 1-го этажа (h_1 = "&ROUND(Окна_Расчет!C49,1)&" м, k_1 = "&ROUND(Окна_Расчет!H49,3)&"): Δp_1 = ("&ROUND(Ввод_и_Итоги!F7,1)&" − "&ROUND(Окна_Расчет!C49,1)&")·9,81·"&ROUND(Окна_Расчет!D49,2)&" + 0,5·"&ROUND(Окна_Расчет!E49,2)&"·"&ROUND(Ввод_и_Итоги!F12,1)&"²·1,4·"&ROUND(Окна_Расчет!H49,3)&" = "&ROUND(Окна_Расчет!I49,2)&" Па"`,
     'Па',
     'Шибеко 2018, ф-ла (6.2), с. 48'
   );
@@ -4351,7 +4442,7 @@ function populateFormulasSheet(ws: ExcelJS.Worksheet, calc: FullCourseworkCalcul
     '(5.4 / 6.3)',
     'Требуемое сопротивление воздухопроницанию окна R_в.тр (при Δp = 10 Па и при Δp = 100 Па)',
     'R_в.тр = (1 / G_н) · (Δp_i / 10)^(2/3);   1,2·R_в.тр — верхняя граница диапазона',
-    `"Для 1-го этажа (Δp_1 = "&TEXT(Окна_Расчет!I49,"0.00")&" Па, G_н = 10 кг/(м²·ч)): R_в.тр = (1/10)·("&TEXT(Окна_Расчет!I49,"0.00")&"/10)^(2/3) = "&TEXT(Окна_Расчет!K49,"0.000")&" (м²·ч)/кг → 1,2·R_в.тр = "&TEXT(Окна_Расчет!D87,"0.000")&" → класс "&Окна_Расчет!F87`,
+    `"Для 1-го этажа (Δp_1 = "&ROUND(Окна_Расчет!I49,2)&" Па, G_н = 10 кг/(м²·ч)): R_в.тр = (1/10)·("&ROUND(Окна_Расчет!I49,2)&"/10)^(2/3) = "&ROUND(Окна_Расчет!K49,3)&" (м²·ч)/кг → 1,2·R_в.тр = "&ROUND(Окна_Расчет!D87,3)&" → класс "&Окна_Расчет!F87`,
     '(м²·ч)/кг',
     'Шибеко 2018, ф-ла (6.3), СТБ 939-2013'
   );

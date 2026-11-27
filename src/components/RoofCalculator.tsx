@@ -8,16 +8,7 @@ import React from 'react';
 import { FullCourseworkCalculation } from '../logic/calculations';
 import { DecodedCipher } from '../logic/decodeCipher';
 import { BUILDING_TYPES } from '../data/buildingTypes';
-import {
-  VAPOR_BARRIER_MATERIALS,
-  ROOF_VB_PLACEMENTS,
-  DEFAULT_CUSTOM_VAPOR_BARRIER,
-  CustomVaporBarrierParams,
-  RoofVaporBarrierPlacement,
-  getVaporBarrierById,
-  getRoofPlacementOption,
-  resolveVaporBarrier,
-} from '../data/vaporBarriers';
+import { ROOF_VB_PLACEMENTS } from '../data/vaporBarriers';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -26,10 +17,11 @@ import {
   Sliders,
   Droplets,
   Thermometer,
-  RotateCcw,
+  Calculator,
 } from 'lucide-react';
 import { CrossSectionTable } from './CrossSectionTable';
 import { NormativeWarningBanner } from './NormativeWarningBanner';
+import { VaporBarrierEditor } from './VaporBarrierEditor';
 
 interface RoofCalculatorProps {
   calc: FullCourseworkCalculation;
@@ -61,136 +53,17 @@ export const RoofCalculator: React.FC<RoofCalculatorProps> = ({
     cipher.overrides?.R_norm_roof ??
     BUILDING_TYPES[internalConditions.buildingTypeId]?.R_norm_roof ??
     6.0;
-
-  const roofVbCfg = cipher.overrides?.roofVaporBarrier;
-  const isManualVb = Boolean(roofVbCfg);
-  const selectedVbId = isManualVb ? roofVbCfg?.materialId ?? 'none' : 'auto';
-  const isCustomVb = selectedVbId === 'custom';
-  const selectedVbMat =
-    selectedVbId !== 'auto' && !isCustomVb ? getVaporBarrierById(selectedVbId) : undefined;
-  const customVbParams: CustomVaporBarrierParams = {
-    ...DEFAULT_CUSTOM_VAPOR_BARRIER,
-    ...(roofVbCfg?.custom || {}),
-  };
-  const selectedVbThickness = isCustomVb
-    ? roofVbCfg?.thicknessMm ?? customVbParams.thicknessMm
-    : isManualVb && selectedVbMat
-    ? roofVbCfg?.thicknessMm ?? selectedVbMat.defaultThicknessMm
-    : roof.vaporBarrier?.thicknessMm ?? 0;
-
-  const selectedPlacement: RoofVaporBarrierPlacement =
-    (roofVbCfg?.placement as RoofVaporBarrierPlacement) ??
-    (roof.vaporBarrier?.placement as RoofVaporBarrierPlacement) ??
-    'before_insulation';
-  const placementOpt = getRoofPlacementOption(selectedPlacement);
-
-  const resolvedManualVb = isManualVb ? resolveVaporBarrier(roofVbCfg) : null;
-  const activeVbRp = isManualVb
-    ? resolvedManualVb?.R_p ?? 0
-    : roof.vaporBarrier?.R_p ?? 0;
-
-  const handleVaporBarrierMaterialChange = (val: string) => {
-    if (val === 'auto') {
-      onChangeCipher({
-        ...cipher,
-        overrides: {
-          ...cipher.overrides,
-          roofVaporBarrier: undefined,
-        },
-      });
-      return;
-    }
-    if (val === 'custom') {
-      onChangeCipher({
-        ...cipher,
-        overrides: {
-          ...cipher.overrides,
-          roofVaporBarrier: {
-            materialId: 'custom',
-            thicknessMm: customVbParams.thicknessMm,
-            placement: selectedPlacement,
-            custom: customVbParams,
-          },
-        },
-      });
-      return;
-    }
-    const mat = getVaporBarrierById(val);
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        roofVaporBarrier: {
-          materialId: val,
-          thicknessMm: mat.defaultThicknessMm,
-          placement: selectedPlacement,
-        },
-      },
-    });
-  };
-
-  const handleVaporBarrierThicknessChange = (val: string) => {
-    const num = parseFloat(val);
-    if (Number.isNaN(num) || num < 0) return;
-    if (!isManualVb || selectedVbId === 'none') return;
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        roofVaporBarrier: {
-          ...roofVbCfg,
-          materialId: selectedVbId,
-          thicknessMm: num,
-          placement: selectedPlacement,
-          custom: isCustomVb ? { ...customVbParams, thicknessMm: num } : roofVbCfg?.custom,
-        },
-      },
-    });
-  };
-
-  const handlePlacementChange = (placement: RoofVaporBarrierPlacement) => {
-    // Если сейчас автоподбор и пароизоляция уже добавлена — закрепляем её материал с новым расположением
-    const baseMatId =
-      isManualVb
-        ? selectedVbId
-        : roof.vaporBarrier?.materialId ?? 'pe_film_1';
-    if (baseMatId === 'none') return;
-    const baseThk = isManualVb
-      ? selectedVbThickness
-      : roof.vaporBarrier?.thicknessMm ?? getVaporBarrierById(baseMatId).defaultThicknessMm;
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        roofVaporBarrier: {
-          ...roofVbCfg,
-          materialId: baseMatId,
-          thicknessMm: baseThk,
-          placement,
-          custom: isCustomVb ? customVbParams : roofVbCfg?.custom,
-        },
-      },
-    });
-  };
-
-  const handleCustomVbFieldChange = (patch: Partial<CustomVaporBarrierParams>) => {
-    const nextCustom: CustomVaporBarrierParams = {
-      ...customVbParams,
-      ...patch,
-    };
-    onChangeCipher({
-      ...cipher,
-      overrides: {
-        ...cipher.overrides,
-        roofVaporBarrier: {
-          materialId: 'custom',
-          thicknessMm: nextCustom.thicknessMm,
-          placement: selectedPlacement,
-          custom: nextCustom,
-        },
-      },
-    });
-  };
+  const activeInsLambda =
+    cipher.overrides?.roofInsulationConductivity ??
+    (internalConditions.exploitationConditions === 'А'
+      ? roof.insulation.lambda_A
+      : roof.insulation.lambda_B);
+  const alphaV = cipher.overrides?.alpha_v_roof ?? cipher.overrides?.alpha_v ?? 8.7;
+  const alphaN = cipher.overrides?.alpha_n ?? 23;
+  const roofSumRpLayers = +roof.layers.reduce((sum, l) => sum + l.R_p, 0).toFixed(3);
+  const roofSumRLayers = +roof.layers.reduce((sum, l) => sum + l.R, 0).toFixed(3);
+  const roofEout =
+    roof.crossSectionProfile[roof.crossSectionProfile.length - 1]?.e_partial ?? 0;
 
   return (
     <div className="space-y-6">
@@ -246,8 +119,8 @@ export const RoofCalculator: React.FC<RoofCalculatorProps> = ({
           </div>
         </div>
 
-        {/* 4 ключевые метрики покрытия */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+        {/* 5 ключевых метрик покрытия (включая Rп) */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-5">
           <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
             <span className="text-xs text-slate-400 block">Требуемое Rт.тр</span>
             <div className="text-xl font-bold font-mono text-white mt-1">
@@ -301,6 +174,19 @@ export const RoofCalculator: React.FC<RoofCalculatorProps> = ({
             </div>
             <span className="text-[11px] text-slate-500 block mt-1">
               Расчетная: {(roof.delta_insulation_calc * 1000).toFixed(0)} мм ({roof.insulation.id})
+            </span>
+          </div>
+
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-cyan-500/35 col-span-2 lg:col-span-1">
+            <span className="text-xs text-slate-400 block">Паропроницание Rп</span>
+            <div
+              data-testid="roof-summary-rp"
+              className="text-xl font-bold font-mono text-cyan-400 mt-1"
+            >
+              {roof.total_R_p.toFixed(2)} <span className="text-xs font-sans text-slate-400">м²·ч·Па/мг</span>
+            </div>
+            <span className="text-[11px] text-slate-400 font-mono block mt-1">
+              пуст.: {roof.total_R_p_void.toFixed(2)} | реб.: {roof.total_R_p_rib.toFixed(2)}
             </span>
           </div>
         </div>
@@ -383,258 +269,45 @@ export const RoofCalculator: React.FC<RoofCalculatorProps> = ({
         </div>
       </div>
 
-      {/* Обоснование, ручной выбор пароизоляции (Приложение Н) и влажностный режим покрытия */}
+      {/* Универсальный выбор и мгновенное редактирование всех параметров пароизоляции покрытия */}
+      <VaporBarrierEditor
+        title="Пароизоляция покрытия (Приложение Н Шибеко / автоподбор / свои параметры)"
+        subtitle="При выборе любого материала пароизоляции (или в режиме автоподбора) все ее характеристики (название, δ, Rп / μ, λ, s, ρ) сразу доступны для правки"
+        config={cipher.overrides?.roofVaporBarrier}
+        applied={roof.vaporBarrier}
+        supportAuto={true}
+        totalRp={roof.total_R_p}
+        totalRpNote={`(пуст.: ${roof.total_R_p_void.toFixed(2)}, реб.: ${roof.total_R_p_rib.toFixed(2)})`}
+        placements={ROOF_VB_PLACEMENTS}
+        defaultPlacement="before_insulation"
+        accent="emerald"
+        testIdPrefix="roof"
+        onChange={(next) =>
+          onChangeCipher({
+            ...cipher,
+            overrides: {
+              ...cipher.overrides,
+              roofVaporBarrier: next,
+            },
+          })
+        }
+      />
+
+      {/* Обоснование и влажностный режим покрытия */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h3 className="text-base font-semibold text-white flex items-center space-x-2">
             <ShieldCheck className="w-5 h-5 text-emerald-400" />
-            <span>Влажностный режим покрытия и выбор пароизоляции (Приложение Н / метод Фокина)</span>
+            <span>Влажностный режим покрытия (метод К. Ф. Фокина, Rп.возд = 0)</span>
           </h3>
-          <div className="flex flex-wrap items-center gap-2">
-            {isManualVb && (
-              <button
-                type="button"
-                onClick={() => handleVaporBarrierMaterialChange('auto')}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Автоподбор</span>
-              </button>
-            )}
-            {onViewMoistureChart && (
-              <button
-                onClick={onViewMoistureChart}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition cursor-pointer"
-              >
-                <Droplets className="w-3.5 h-3.5" />
-                <span>Открыть график E(x) / e(x)</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Селектор материала, расположения (СП 2.04.01 п. 10.6) и толщины пароизоляции покрытия */}
-        <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-            <div className="md:col-span-5">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                Материал пароизоляции (Приложение Н / Свой)
-              </label>
-              <select
-                aria-label="Материал пароизоляции покрытия"
-                value={selectedVbId}
-                onChange={(e) => handleVaporBarrierMaterialChange(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="auto">
-                  Автоподбор (по проверке Фокина: {roof.vaporBarrierAdded ? 'требуется' : 'не требуется'})
-                </option>
-                {VAPOR_BARRIER_MATERIALS.map((mat) => (
-                  <option key={mat.id} value={mat.id}>
-                    {mat.name}
-                    {mat.id !== 'none' ? ` (баз. δ=${mat.baseThicknessMm} мм, Rп=${mat.baseRp})` : ''}
-                  </option>
-                ))}
-                <option value="custom">+ Своя пароизоляция (ввести параметры вручную)</option>
-              </select>
-            </div>
-
-            <div className="md:col-span-4">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                Расположение пароизоляции в покрытии
-              </label>
-              <select
-                aria-label="Расположение пароизоляции покрытия"
-                disabled={selectedVbId === 'none'}
-                value={selectedPlacement}
-                onChange={(e) => handlePlacementChange(e.target.value as RoofVaporBarrierPlacement)}
-                className="w-full bg-slate-900 border border-slate-700 disabled:opacity-50 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                {ROOF_VB_PLACEMENTS.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-1">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                δ, мм
-              </label>
-              <input
-                aria-label="Толщина пароизоляции покрытия, мм"
-                type="number"
-                step="0.05"
-                min="0"
-                disabled={!isManualVb || selectedVbId === 'none'}
-                value={selectedVbId === 'none' ? 0 : selectedVbThickness}
-                onChange={(e) => handleVaporBarrierThicknessChange(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 disabled:opacity-50 rounded-lg px-2.5 py-2 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            <div className="md:col-span-2 bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2">
-              <span className="text-[11px] text-slate-400 block">
-                {isManualVb ? 'Rп вручную:' : 'Принято Rп:'}
-              </span>
-              <div className="text-sm font-bold font-mono text-emerald-400">
-                {activeVbRp.toFixed(3)}
-              </div>
-              <span className="text-[10px] text-slate-500 block">
-                ΣRп: {roof.total_R_p}
-              </span>
-            </div>
-          </div>
-
-          {isCustomVb && (
-            <div className="bg-cyan-950/25 border border-cyan-500/40 rounded-xl p-3.5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold text-cyan-200">
-                  Параметры своей пароизоляции покрытия
-                </span>
-                <div className="inline-flex rounded-lg bg-slate-950 border border-slate-700 p-0.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => handleCustomVbFieldChange({ inputMode: 'rp' })}
-                    className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition ${
-                      (customVbParams.inputMode ?? 'rp') === 'rp'
-                        ? 'bg-cyan-600 text-white'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Задать Rп
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleCustomVbFieldChange({ inputMode: 'mu' })}
-                    className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition ${
-                      customVbParams.inputMode === 'mu'
-                        ? 'bg-cyan-600 text-white'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Задать μ
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-[11px] text-slate-400 mb-1">Наименование материала</label>
-                  <input
-                    aria-label="Наименование своей пароизоляции покрытия"
-                    type="text"
-                    value={customVbParams.name}
-                    onChange={(e) => handleCustomVbFieldChange({ name: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-
-                {(customVbParams.inputMode ?? 'rp') === 'rp' ? (
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Rп, м²·ч·Па/мг</label>
-                    <input
-                      aria-label="Rп своей пароизоляции покрытия"
-                      type="number"
-                      step="0.1"
-                      min="0.01"
-                      value={customVbParams.R_p ?? 5.0}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value);
-                        if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ R_p: v });
-                      }}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">μ, мг/(м·ч·Па)</label>
-                    <input
-                      aria-label="μ своей пароизоляции покрытия"
-                      type="number"
-                      step="0.0001"
-                      min="0.00001"
-                      value={customVbParams.mu ?? 0.0002}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value);
-                        if (!Number.isNaN(v) && v > 0) handleCustomVbFieldChange({ mu: v });
-                      }}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">λ, Вт/(м·°C)</label>
-                  <input
-                    aria-label="λ своей пароизоляции покрытия"
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={customVbParams.lambda ?? 0.2}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isNaN(v) && v > 0) handleCustomVbFieldChange({ lambda: v });
-                    }}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">s, Вт/(м²·°C)</label>
-                  <input
-                    aria-label="s своей пароизоляции покрытия"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={customVbParams.s ?? 3.5}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ s: v });
-                    }}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">ρ, кг/м³</label>
-                  <input
-                    aria-label="ρ своей пароизоляции покрытия"
-                    type="number"
-                    step="50"
-                    min="0"
-                    value={customVbParams.density ?? 1000}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isNaN(v) && v >= 0) handleCustomVbFieldChange({ density: v });
-                    }}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {roof.vaporBarrierAdded && (
-            <div
-              className={`rounded-lg px-3 py-2 text-xs border ${
-                placementOpt.isNormative
-                  ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-200'
-                  : selectedPlacement === 'after_insulation'
-                  ? 'bg-rose-950/40 border-rose-600/60 text-rose-200'
-                  : 'bg-amber-950/30 border-amber-700/60 text-amber-200'
-              }`}
+          {onViewMoistureChart && (
+            <button
+              onClick={onViewMoistureChart}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition cursor-pointer"
             >
-              <span className="font-semibold">
-                {placementOpt.isNormative
-                  ? '✓ По нормам СП 2.04.01-2020 п. 10.6: '
-                  : selectedPlacement === 'after_insulation'
-                  ? '✗ Нарушение норм монтажа: '
-                  : '⚠ Нестандартное положение: '}
-              </span>
-              <span>{placementOpt.note}</span>
-            </div>
+              <Droplets className="w-3.5 h-3.5" />
+              <span>Открыть график E(x) / e(x)</span>
+            </button>
           )}
         </div>
 
@@ -764,7 +437,102 @@ export const RoofCalculator: React.FC<RoofCalculatorProps> = ({
                 </tr>
               ))}
             </tbody>
+            <tfoot className="border-t-2 border-slate-800 bg-slate-950 font-mono font-bold text-slate-200">
+              <tr>
+                <td colSpan={3} className="py-2.5 px-3 font-sans text-right">
+                  Суммарно по конструкции покрытия (с 1/37 и 1/77 для Rп):
+                </td>
+                <td className="py-2.5 px-3 text-white">
+                  {Math.round(roof.layers.reduce((sum, l) => sum + l.thickness, 0) * 1000)} мм
+                </td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-emerald-400">{roofSumRLayers.toFixed(3)}</td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-amber-400">{roof.thermalInertia_D}</td>
+                <td className="py-2.5 px-3">—</td>
+                <td className="py-2.5 px-3 text-cyan-400">{roof.total_R_p.toFixed(2)}</td>
+              </tr>
+            </tfoot>
           </table>
+        </div>
+      </div>
+
+      {/* Пошаговые формулы расчета покрытия */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <Calculator className="w-5 h-5 text-emerald-400" />
+          <h3 className="text-base font-bold text-white">
+            Формулы и этапы теплотехнического и влажностного расчета покрытия
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              1. Требуемое сопротивление Rт.тр и толщина утеплителя δут:
+            </span>
+            <div className="text-blue-300">
+              Rт.тр = Rт.норм × n = {rNormRoof.toFixed(2)} × {roof.construction.increasingFactor_n} ={' '}
+              <span className="font-bold text-white">{roof.R_required} м²·°С/Вт</span>
+            </div>
+            <div className="text-blue-300">
+              δут.расч = (Rт.тр − Rбез_ут) × λут = ({roof.R_required} − {roof.R_without_insulation}) × {activeInsLambda} ={' '}
+              <span className="font-bold text-white">{roof.delta_insulation_calc} м</span>
+            </div>
+            <div className="text-emerald-400 font-sans">
+              Принята толщина утеплителя: <span className="font-mono font-bold">{Math.round(roof.delta_insulation_adopted * 1000)} мм</span>.
+            </div>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              2. Приведенное сопротивление R₀ и тепловая инерция D:
+            </span>
+            <div className="text-blue-300">
+              R₀ = 1/αв + Rпл + Σ(δᵢ/λᵢ) + 1/αн = 1/{alphaV} + {roofSumRLayers.toFixed(3)} + 1/{alphaN} ={' '}
+              <span className="font-bold text-white">{roof.R_total} м²·°С/Вт</span>
+            </div>
+            <div className="text-amber-300">
+              Dпокрытия = min(Dпуст = {roof.thermalInertia_D_void}, Dреб = {roof.thermalInertia_D_rib}) ={' '}
+              <span className="font-bold text-white">{roof.thermalInertia_D}</span>
+            </div>
+            <p className="text-[11px] text-slate-500 font-sans">
+              {roof.designTempRule} → tн = {roof.design_t_out}°C (при sвозд = 0 в замкнутой пустоте плиты).
+            </p>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              3. Перепад температур Δtв и температура внутренней поверхности τв:
+            </span>
+            <div className="text-blue-300">
+              Δtв = (tв − tн) / (R₀ · αв) = ({internalConditions.t_v} − ({roof.design_t_out})) / ({currentR} · {alphaV}) ={' '}
+              <span className="font-bold text-white">{roof.delta_t_actual} °C</span> ≤ {roof.delta_t_norm} °C
+            </div>
+            <div className="text-blue-300">
+              τв = tв − Δtв = {internalConditions.t_v} − {roof.delta_t_actual} ={' '}
+              <span className="font-bold text-white">{roof.tau_v_min} °C</span> &gt; tр ({roof.dew_point} °C)
+            </div>
+            <p className="text-[11px] text-slate-500 font-sans">
+              По ребру: τв = {roof.worstSection.tau_v_steady}°C; по пустоте: τв = {roof.voidSection.tau_v_steady}°C.
+            </p>
+          </div>
+
+          <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
+            <span className="text-slate-400 font-sans block font-semibold">
+              4. Сопротивление паропроницанию Rп (Rп.возд = 0 по СП 2.04.01 п. 10.5):
+            </span>
+            <div className="text-cyan-300">
+              Rп = 1/37 + Σ(δᵢ/μᵢ){roof.vaporBarrier ? ' + Rп.пи' : ''} + 1/77 = 0,027 + {roofSumRpLayers} + 0,013 ={' '}
+              <span className="font-bold text-white">{roof.total_R_p.toFixed(2)} м²·ч·Па/мг</span>
+            </div>
+            <div className="text-slate-300">
+              По пустоте (2 полки, Rп.возд = 0): <span className="text-cyan-300 font-bold">{roof.total_R_p_void.toFixed(2)}</span> | По ребру (h={roof.hollowCore.height} мм): <span className="text-indigo-300 font-bold">{roof.total_R_p_rib.toFixed(2)}</span>
+            </div>
+            <div className="text-slate-400">
+              e(x) = eв − ((eв − eн.от) / Rп) · ΣRп = {internalConditions.e_v} − (({internalConditions.e_v} − {roofEout}) / {roof.total_R_p.toFixed(2)}) · ΣRп
+            </div>
+          </div>
         </div>
       </div>
 

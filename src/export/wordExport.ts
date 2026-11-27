@@ -875,6 +875,7 @@ export function buildCourseworkWordDocument(calc: FullCourseworkCalculation): Do
             makeCell('s, Вт/(м²·°C)', { header: true }),
             makeCell('μ, мг/(м·ч·Па)', { header: true }),
             makeCell('R_i, м²·°C/Вт', { header: true }),
+            makeCell('R_пi, м²·ч·Па/мг', { header: true }),
           ],
         }),
         ...basement.layers.map(
@@ -888,6 +889,7 @@ export function buildCourseworkWordDocument(calc: FullCourseworkCalculation): Do
                 makeCell(fmtTrim(l.s, 2)),
                 makeCell(fmtTrim(l.mu, 4)),
                 makeCell(fmtNum(l.R, 3), { bold: true }),
+                makeCell(fmtNum(l.R_p, 3)),
               ],
             })
         ),
@@ -899,12 +901,13 @@ export function buildCourseworkWordDocument(calc: FullCourseworkCalculation): Do
             makeCell(`Δtп = ${fmtNum(basement.delta_t_floor, 2)} °C`, { result: true }),
             makeCell(`τв.цок = ${fmtNum(basement.tau_v_basement_wall, 2)} °C`, { result: true }),
             makeCell(`tр.п = ${fmtNum(basement.dew_point_basement, 2)} °C`, { result: true }),
+            makeCell(`Rп = ${fmtNum(basement.total_R_p, 3)}`, { result: true }),
           ],
         }),
       ],
     }),
     ...pFormula(
-      `R_ПТП = 1/α_в.п + Σ(δ_i / λ_i) + 1/α_н.п = ${fmtNum(basement.R_ptp, 3)} м²·°C/Вт ≥ R_т.норм = ${fmtNum(basement.R_required, 2)} м²·°C/Вт`,
+      `R_ПТП = 1/α_в.п + Σ(δ_i / λ_i) + 1/α_н.п = ${fmtNum(basement.R_ptp, 3)} м²·°C/Вт ≥ R_т.норм = ${fmtNum(basement.R_required, 2)} м²·°C/Вт;   R_п.ПТП = 1/37 + ΣR_пi + 1/77 = ${fmtNum(basement.total_R_p, 2)} м²·ч·Па/мг`,
       '(4.1)'
     ),
     ...pFormula(

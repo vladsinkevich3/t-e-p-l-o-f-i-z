@@ -260,13 +260,15 @@ test('Поддержка всех 9 типов зданий (СП 2.04.01-2020 �
   assert.equal(resOverrideB.internalConditions.exploitationConditions, 'Б');
 });
 
-test('Генератор автономной книги Excel (.xlsx) создает 16 листов с живыми формулами, нативными графиками Шибеко и AutoCAD_Графики', async () => {
+test('Генератор автономной книги Excel (.xlsx) создает 18 листов с живыми формулами без TEXT(), нативными графиками Шибеко и AutoCAD_Графики', async () => {
   const calc = calculateCoursework(PDF_REFERENCE_CIPHER);
   const wb = await buildCourseworkWorkbook(calc);
 
-  // 1. Проверяем количество и точные имена всех 16 листов
+  // 1. Проверяем количество и точные имена всех 18 листов
   const expectedSheets = [
     'Ввод_и_Итоги',
+    'В_отчет',
+    'Формулы_расчета',
     'Стена_Расчет',
     'Стены_Все_Схемы',
     'Покрытие_Расчет',
@@ -294,10 +296,10 @@ test('Генератор автономной книги Excel (.xlsx) созд�
   await reloaded.xlsx.load(Buffer.from(buffer) as unknown as ExcelJS.Buffer);
   assert.equal(reloaded.worksheets.length, expectedSheets.length);
 
-  // 3. Проверяем справочники: 129 городов, 9 типов зданий, 16 пароизоляций (включая ILMAX), 531 точка E(t)
+  // 3. Проверяем справочники: 129 городов, 9 типов зданий, 16 пароизоляций + 3 пользовательских слота, 531 точка E(t)
   assert.equal(reloaded.getWorksheet('Справ_Города')!.rowCount, 130);
   assert.equal(reloaded.getWorksheet('Справ_ТипыЗданий')!.rowCount, 10);
-  assert.equal(reloaded.getWorksheet('Справ_Пароизоляция')!.rowCount, 17);
+  assert.equal(reloaded.getWorksheet('Справ_Пароизоляция')!.rowCount, 20);
   assert.equal(reloaded.getWorksheet('Справ_Таблица_Е1')!.rowCount, 532); // 1 заголовок + 531 строка
 
   // 4. Проверяем Data Validation (выпадающие списки) на Ввод_и_Итоги (включая C24 — режим выбора t_н)
@@ -321,7 +323,7 @@ test('Генератор автономной книги Excel (.xlsx) созд�
   assert.ok(!wallTauFormula.includes('H17'), `Формула τв стены не должна содержать коэффициент m: ${wallTauFormula}`);
   assert.ok(wallTauFormula.includes('C18') && wallTauFormula.includes("'Ввод_и_Итоги'!$C$34"));
 
-  // 6. Проверяем формулы линейной интерполяции E(t), AutoCAD SUBSTITUTE и отсутствие ошибок
+  // 6. Проверяем формулы линейной интерполяции E(t), AutoCAD SUBSTITUTE, отсутствие TEXT() и ошибок
   let totalFormulas = 0;
   let interpolationFormulaCount = 0;
   let autocadSubstituteCount = 0;
@@ -333,6 +335,9 @@ test('Генератор автономной книги Excel (.xlsx) созд�
           totalFormulas++;
           assert.ok(!val.formula.startsWith('='), `Лист ${ws.name} ${cell.address}: лишний знак '='`);
           assert.ok(!val.formula.includes('#REF!'), `Лист ${ws.name} ${cell.address}: битая ссылка #REF!`);
+          assert.ok(!val.formula.includes('#VALUE!'), `Лист ${ws.name} ${cell.address}: ошибка #VALUE!`);
+          assert.ok(!val.formula.includes('#NAME?'), `Лист ${ws.name} ${cell.address}: ошибка #NAME?`);
+          assert.ok(!val.formula.includes('TEXT('), `Лист ${ws.name} ${cell.address}: локалезависимая функция TEXT() вызывает #ЗНАЧ!: ${val.formula}`);
           assert.ok(!val.formula.includes('XLOOKUP'), `Лист ${ws.name} ${cell.address}: несовместимая XLOOKUP`);
           assert.ok(!val.formula.includes('Окна_и_Двери'), `Лист ${ws.name} ${cell.address}: устаревшая ссылка на двери`);
           if (val.formula.includes("MATCH(") && val.formula.includes("'Справ_Таблица_Е1'!$A$2:$A$532,1)")) {
@@ -637,16 +642,22 @@ test('Динамический расчет Eв(tв) по температуре
   const wallWs = wb.getWorksheet('Стена_Расчет')!;
   assert.ok(String(wallWs.getCell('A25').value).includes('t_зима') && String(wallWs.getCell('A25').value).includes('t_от.пер'));
   assert.equal(wallWs.getCell('A27').value, 'Воздух вн.');
-  assert.equal(wallWs.getCell('A39').value, 'Воздух нар.');
+  assert.equal(wallWs.getCell('A45').value, 'Воздух нар.');
 
   const roofWs = wb.getWorksheet('Покрытие_Расчет')!;
   assert.ok(String(roofWs.getCell('A31').value).includes('t_зима') && String(roofWs.getCell('A31').value).includes('t_от.пер'));
   assert.equal(roofWs.getCell('A33').value, 'Воздух вн.');
-  assert.equal(roofWs.getCell('A43').value, 'Воздух нар.');
-  assert.equal(roofWs.getCell('A47').value, 'Воздух вн.');
-  assert.equal(roofWs.getCell('A53').value, 'Воздух нар.');
+  assert.equal(roofWs.getCell('A47').value, 'Воздух нар.');
+  assert.equal(roofWs.getCell('A51').value, 'Воздух вн.');
+  assert.equal(roofWs.getCell('A62').value, 'Воздух нар.');
   const roofRpTotalFormula = (roofWs.getCell('C24').value as { formula?: string })?.formula || '';
   assert.ok(!roofRpTotalFormula.includes('$C$7'), `R_п.возд должно быть 0 (без +$C$7): ${roofRpTotalFormula}`);
+  assert.ok(
+    roofRpTotalFormula.includes('$J$7') && roofRpTotalFormula.includes('$J$13') && roofRpTotalFormula.includes('$K$15'),
+    `R_п покрытия должно учитывать полки плиты K15 и слои J7..J13: ${roofRpTotalFormula}`
+  );
+  const roofRpRibFormula = (roofWs.getCell('C25').value as { formula?: string })?.formula || '';
+  assert.ok(roofRpRibFormula.includes('$H$15') && roofRpRibFormula.includes('$J$13'), `R_п по ребру должно учитывать полную толщину плиты $H$15: ${roofRpRibFormula}`);
 
   const vbWs = wb.getWorksheet('Справ_Пароизоляция')!;
   const vbNames: string[] = [];
@@ -657,10 +668,147 @@ test('Динамический расчет Eв(tв) по температуре
   assert.ok(vbNames.some((n) => n.includes('ilmax tezer V')), 'В Справ_Пароизоляция должна быть ilmax tezer V');
 
   const acWs = wb.getWorksheet('AutoCAD_Графики')!;
-  assert.ok(String(acWs.getCell('A43').value).includes('ПОШАГОВАЯ ИНСТРУКЦИЯ'));
-  assert.ok(String(acWs.getCell('A44').value).includes('Шаг 1'));
-  assert.ok(String(acWs.getCell('A49').value).includes('Шаг 6'));
+  assert.ok(String(acWs.getCell('A46').value).includes('ПОШАГОВАЯ ИНСТРУКЦИЯ'));
+  assert.ok(String(acWs.getCell('A47').value).includes('Шаг 1'));
+  assert.ok(String(acWs.getCell('A52').value).includes('Шаг 6'));
 });
+
+test('Редактирование параметров любой выбранной пароизоляции (стена, покрытие, подполье) немедленно пересчитывает Rп и корректно экспортируется в Excel', async () => {
+  const edited = calculateCoursework({
+    ...PDF_REFERENCE_CIPHER,
+    overrides: {
+      ...PDF_REFERENCE_CIPHER.overrides,
+      wallVaporBarrier: {
+        materialId: 'pe_film_1',
+        thicknessMm: 0.2,
+        custom: {
+          name: 'ПЭ пленка (усиленная)',
+          thicknessMm: 0.2,
+          inputMode: 'rp',
+          R_p: 9.5,
+          lambda: 0.25,
+          s: 3.1,
+          density: 950,
+        },
+      },
+      roofVaporBarrier: {
+        materialId: 'ilmax_4630',
+        thicknessMm: 2.0,
+        custom: {
+          name: 'ilmax 4630 (пароизоляционный клей)',
+          thicknessMm: 2.0,
+          inputMode: 'mu',
+          R_p: 4.0,
+          mu: 0.0005, // Rп = (2.0 / 1000) / 0.0005 = 4.0
+        },
+      },
+      basementVaporBarrier: {
+        materialId: 'ruberoid',
+        thicknessMm: 3.0,
+        custom: {
+          name: 'Рубероид (усиленный)',
+          thicknessMm: 3.0,
+          inputMode: 'rp',
+          R_p: 3.5,
+        },
+      },
+    },
+  });
+
+  // 1. Стена: пользовательское Rп = 9.5, флаг isCustom = true
+  assert.ok(edited.wall.vaporBarrier);
+  assert.equal(edited.wall.vaporBarrier.isCustom, true);
+  assert.equal(edited.wall.vaporBarrier.R_p, 9.5);
+  assert.equal(edited.wall.vaporBarrier.name, 'ПЭ пленка (усиленная)');
+  assert.equal(edited.wall.vaporBarrier.lambda, 0.25);
+
+  // 2. Покрытие: расчет через custom.mu -> Rп = 0.002 / 0.0005 = 4.0
+  assert.ok(edited.roof.vaporBarrier);
+  assert.equal(edited.roof.vaporBarrier.isCustom, true);
+  assert.equal(edited.roof.vaporBarrier.R_p, 4.0);
+  assert.equal(edited.roof.vaporBarrier.mu, 0.0005);
+
+  // 3. Подполье: опциональная пароизоляция увеличивает Rп перекрытия
+  const withoutBasementVb = calculateCoursework(PDF_REFERENCE_CIPHER);
+  assert.equal(withoutBasementVb.basement.vaporBarrier, null);
+  assert.ok(edited.basement.vaporBarrier);
+  assert.equal(edited.basement.vaporBarrier.isCustom, true);
+  assert.equal(edited.basement.vaporBarrier.R_p, 3.5);
+  assert.ok(
+    edited.basement.total_R_p >= withoutBasementVb.basement.total_R_p + 3.45,
+    `R_п подполья должно вырасти на ~3.5 (${edited.basement.total_R_p} vs ${withoutBasementVb.basement.total_R_p})`
+  );
+
+  // 4. Экспорт в Excel: в Справ_Пароизоляция нет коллизий имен с каталогом
+  const wb = await buildCourseworkWorkbook(edited);
+  const vbWs = wb.getWorksheet('Справ_Пароизоляция')!;
+  const inputWs = wb.getWorksheet('Ввод_и_Итоги')!;
+  const names: string[] = [];
+  for (let r = 2; r <= 20; r++) {
+    names.push(String(vbWs.getCell(`A${r}`).value));
+  }
+  assert.equal(new Set(names).size, names.length, 'Имена в Справ_Пароизоляция должны быть уникальны без коллизий');
+  const wallVbSelected = String(inputWs.getCell('C17').value);
+  const roofVbSelected = String(inputWs.getCell('C19').value);
+  assert.ok(names.includes(wallVbSelected), `Выбранная ПИ стены (${wallVbSelected}) должна присутствовать в Справ_Пароизоляция`);
+  assert.ok(names.includes(roofVbSelected), `Выбранная ПИ покрытия (${roofVbSelected}) должна присутствовать в Справ_Пароизоляция`);
+});
+
+test('Rп покрытия (пустота vs ребро), Rп подполья, точное E_п(t_п) и синхронизация листов Excel Покрытие_Расчет / Подполье_ПТП', async () => {
+  const calc = calculateCoursework(DEFAULT_CIPHER);
+
+  // 1. Покрытие: Rп по ребру > Rп по пустоте (бетон на всю высоту h > 2*δ_ф, R_п.возд = 0)
+  assert.ok(calc.roof.total_R_p_rib > calc.roof.total_R_p_void);
+  assert.ok(
+    calc.roof.total_R_p === calc.roof.total_R_p_void || calc.roof.total_R_p === calc.roof.total_R_p_rib,
+    `calc.roof.total_R_p (${calc.roof.total_R_p}) должен совпадать с Rп по пустоте (${calc.roof.total_R_p_void}) или по ребру (${calc.roof.total_R_p_rib})`
+  );
+  // Для активного сечения по ребру Rп плиты = h / μ, для сечения по пустоте = 2 * ((h-d)/2) / μ (R_п.возд = 0)
+  const slabLayerRib = calc.roof.layers.find((l) => l.name.includes('Многопустотная ж/б плита'));
+  assert.ok(slabLayerRib);
+  const expectedRibSlabRp = +((calc.roof.hollowCore.height / 1000) / slabLayerRib.mu).toFixed(3);
+  assert.equal(slabLayerRib.R_p, expectedRibSlabRp);
+
+  const calcVoid = calculateCoursework({
+    ...DEFAULT_CIPHER,
+    overrides: { ...DEFAULT_CIPHER.overrides, roofCrossSectionMode: 'void' },
+  });
+  const slabLayerVoid = calcVoid.roof.layers.find((l) => l.name.includes('Многопустотная ж/б плита'));
+  assert.ok(slabLayerVoid);
+  const flangeActualM = (calcVoid.roof.hollowCore.height - calcVoid.roof.hollowCore.voidDiameter) / 2 / 1000;
+  const expectedVoidSlabRp = +((2 * flangeActualM) / slabLayerVoid.mu).toFixed(3);
+  assert.equal(slabLayerVoid.R_p, expectedVoidSlabRp);
+  assert.equal(calcVoid.roof.total_R_p, calcVoid.roof.total_R_p_void);
+
+  // 2. Подполье: R_п.ПТП > 0, E_p вычисляется точно через getSaturatedVaporPressure(t_p), без хардкода 1127 Па
+  assert.ok(calc.basement.total_R_p > 0.5);
+  assert.equal(calc.basement.E_p, getSaturatedVaporPressure(calc.basement.crawlSpaceTemp_t_p));
+  assert.equal(calc.basement.e_p, +(calc.basement.E_p * (calc.basement.crawlSpaceRH / 100)).toFixed(2));
+  // Точка середины утеплителя должна иметь координату внутри слоя утеплителя, а не бетонной плиты
+  const midPt = calc.basement.crossSectionProfile.find((p) => p.isInsulationMidpoint);
+  assert.ok(midPt);
+  assert.ok(midPt.planeName.includes('утепл'));
+
+  // 3. Проверка единого формата таблицы слоев Покрытие_Расчет (как Стена_Расчет) и R_п.ПТП в Подполье_ПТП
+  const wb = await buildCourseworkWorkbook(calc);
+  const wallWs = wb.getWorksheet('Стена_Расчет')!;
+  const roofWs = wb.getWorksheet('Покрытие_Расчет')!;
+  for (let col = 1; col <= 11; col++) {
+    assert.equal(
+      roofWs.getCell(6, col).value,
+      wallWs.getCell(6, col).value,
+      `Заголовок столбца ${col} в Покрытие_Расчет должен совпадать со Стена_Расчет`
+    );
+  }
+  assert.equal(roofWs.getCell('C9').value, 'ПЛИТА');
+  assert.equal(roofWs.getCell('C10').value, 'INSULATION');
+
+  const baseWs = wb.getWorksheet('Подполье_ПТП')!;
+  assert.equal(baseWs.getCell('I6').value, 'R_п.i');
+  const baseRpFormula = (baseWs.getCell('C17').value as { formula?: string })?.formula || '';
+  assert.ok(baseRpFormula.includes('SUM(I7:I12)'), `Подполье_ПТП!C17 должна считать R_п.ПТП: ${baseRpFormula}`);
+});
+
 
 
 
