@@ -53,7 +53,8 @@ export default function App() {
 
   // Экспорт в автономную книгу Excel (.xlsx с живыми формулами)
   const handleExportExcel = async () => {
-   
+   showToast('Отчет Excel временно отключен.');
+  return;
     try {
       await exportCourseworkToExcel(calculation);
       showToast('Автономная книга Excel (.xlsx, 18 листов, В_отчет, Формулы_расчета, графики Шибеко и AutoCAD) сформирована!');
